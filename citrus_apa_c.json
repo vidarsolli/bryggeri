@@ -1,0 +1,1 @@
+{"cooling_ki": 2.1, "heating_setpoint": 80, "cooling_setpoint": 23, "brewing_temp": [67, 70, 75, 73], "brewing_pump_speed": 80, "cooling_kd": 0.0, "cooling_kp": 1.2, "brewing_time": [20, 20, 10, 5], "boiling_heating_power": 95, "brewing_increase_lim": 0.1, "brewing_decrease_lim": 0.15}
