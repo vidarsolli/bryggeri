@@ -1,10 +1,20 @@
 import getopt
 from datetime import datetime
 import json
+import time
+import threading
 from tkinter import *
 from tkinter import ttk
 from tkinter import filedialog, messagebox
 
+heating_running = False
+heating_thread = None
+brewing_running = False
+brewing_thread = None
+boiling_running = False
+boiling_thread = None
+cooling_running = False
+cooling_thread = None
 
 annotation_tags = ([])
 xref = ([])
@@ -77,30 +87,171 @@ def save_settings(*args):
             messagebox.showerror('Error Saving settings', "Not .lson extention")
     except Exception as e:
         messagebox.showerror('Error Saving settings', 'Unable to open file: %r' % filename)
+def heating():
+    global heating_running
+    global heating_thread
+    start_time = time.time()
+    last_time = time.time()
+    while heating_running:
+        # Print elapsed time
+        if time.time() - last_time > 1.:
+            elapsed_time = time.time()-start_time
+            heating_elapsed_time.configure(text=time.strftime('%H:%M:%S', time.gmtime(elapsed_time)))
+            last_time = time.time()
+        time.sleep(0.1)
 
 def heating_start(*args):
-    i = 0
+    global heating_running
+    global heating_thread
+    heating_running_label.configure(text="Running", foreground="red")
+    heating_stop_button.configure(state=NORMAL)
+    heating_start_button.configure(state=DISABLED)
+    brewing_start_button.configure(state=DISABLED)
+    boiling_start_button.configure(state=DISABLED)
+    cooling_start_button.configure(state=DISABLED)
+    heating_running = True
+    heating_thread = threading.Thread(target=heating)
+    heating_thread.start()
 
 def heating_stop(*args):
-    i = 0
+    global heating_running
+    global heating_thread
+    heating_running_label.configure(text="")
+    heating_stop_button.configure(state=DISABLED)
+    heating_start_button.configure(state=NORMAL)
+    brewing_start_button.configure(state=NORMAL)
+    boiling_start_button.configure(state=NORMAL)
+    cooling_start_button.configure(state=NORMAL)
+    heating_running = False
+
+def brewing():
+    global brewing_running
+    global brewing_thread
+    start_time = time.time()
+    last_time = time.time()
+    time_idx = 0
+    time_extend = settings["brewing_time"][time_idx]*60
+    temp_setpoint = settings["brewing_temp"][time_idx]
+    next_change_of_temp = time_extend
+    time_idx += 1
+    print("Temp setpoint: ", temp_setpoint, time_extend)
+    while brewing_running and time_idx < 4 and time_extend != 0 :
+        # Print elapsed time
+        if time.time() - last_time > 1.:
+            elapsed_time = time.time()-start_time
+            brewing_elapsed_time.configure(text=time.strftime('%H:%M:%S', time.gmtime(elapsed_time)))
+            last_time = time.time()
+        # Run temp regulator
+
+        # Check if change in temp
+        if time.time() - start_time >= next_change_of_temp:
+            time_extend = settings["brewing_time"][time_idx] * 60
+            next_change_of_temp += time_extend
+            temp_setpoint = settings["brewing_temp"][time_idx]
+            print("Temp setpoint: ", temp_setpoint)
+            time_idx += 1
+        time.sleep(0.1)
+    # Exit thread
+    brewing_stop()
+
 
 def brewing_start(*args):
-    i = 0
+    global brewing_running
+    global brewing_thread
+    brewing_running_label.configure(text="Running", foreground="red")
+    brewing_stop_button.configure(state=NORMAL)
+    heating_start_button.configure(state=DISABLED)
+    brewing_start_button.configure(state=DISABLED)
+    boiling_start_button.configure(state=DISABLED)
+    cooling_start_button.configure(state=DISABLED)
+    brewing_running = True
+    brewing_thread = threading.Thread(target=brewing)
+    brewing_thread.start()
 
 def brewing_stop(*args):
-    i = 0
+    global brewing_running
+    global brewing_thread
+    brewing_running_label.configure(text="")
+    brewing_stop_button.configure(state=DISABLED)
+    heating_start_button.configure(state=NORMAL)
+    brewing_start_button.configure(state=NORMAL)
+    boiling_start_button.configure(state=NORMAL)
+    cooling_start_button.configure(state=NORMAL)
+    brewing_running = False
+
+def boiling():
+    global boiling_running
+    global boiling_thread
+    start_time = time.time()
+    last_time = time.time()
+    while boiling_running:
+        # Print elapsed time
+        if time.time() - last_time > 1.:
+            elapsed_time = time.time()-start_time
+            boiling_elapsed_time.configure(text=time.strftime('%H:%M:%S', time.gmtime(elapsed_time)))
+            last_time = time.time()
+        time.sleep(0.1)
 
 def boiling_start(*args):
-    i = 0
+    global boiling_running
+    global boiling_thread
+    boiling_running_label.configure(text="Running", foreground="red")
+    boiling_stop_button.configure(state=NORMAL)
+    heating_start_button.configure(state=DISABLED)
+    brewing_start_button.configure(state=DISABLED)
+    boiling_start_button.configure(state=DISABLED)
+    cooling_start_button.configure(state=DISABLED)
+    boiling_running = True
+    boiling_thread = threading.Thread(target=boiling)
+    boiling_thread.start()
 
 def boiling_stop(*args):
-    i = 0
+    global boiling_running
+    global boiling_thread
+    boiling_running_label.configure(text="")
+    boiling_stop_button.configure(state=DISABLED)
+    heating_start_button.configure(state=NORMAL)
+    brewing_start_button.configure(state=NORMAL)
+    boiling_start_button.configure(state=NORMAL)
+    cooling_start_button.configure(state=NORMAL)
+    boiling_running = False
+
+def cooling():
+    global cooling_running
+    global cooling_thread
+    start_time = time.time()
+    last_time = time.time()
+    while cooling_running:
+        # Print elapsed time
+        if time.time() - last_time > 1.:
+            elapsed_time = time.time()-start_time
+            cooling_elapsed_time.configure(text=time.strftime('%H:%M:%S', time.gmtime(elapsed_time)))
+            last_time = time.time()
+        time.sleep(0.1)
 
 def cooling_start(*args):
-    i = 0
+    global cooling_running
+    global cooling_thread
+    cooling_running_label.configure(text="Running", foreground="red")
+    cooling_stop_button.configure(state=NORMAL)
+    heating_start_button.configure(state=DISABLED)
+    brewing_start_button.configure(state=DISABLED)
+    boiling_start_button.configure(state=DISABLED)
+    cooling_start_button.configure(state=DISABLED)
+    cooling_running = True
+    cooling_thread = threading.Thread(target=cooling)
+    cooling_thread.start()
 
 def cooling_stop(*args):
-    i = 0
+    global cooling_running
+    global cooling_thread
+    cooling_running_label.configure(text="")
+    cooling_stop_button.configure(state=DISABLED)
+    heating_start_button.configure(state=NORMAL)
+    brewing_start_button.configure(state=NORMAL)
+    boiling_start_button.configure(state=NORMAL)
+    cooling_start_button.configure(state=NORMAL)
+    cooling_running = False
 
 def start_pump(*args):
     i = 0
@@ -195,7 +346,7 @@ selected_settings_label['textvariable'] = selected_settings
 save_settings_button = ttk.Button(mainframe, text="Save settings", command=save_settings)
 
 heating_label = ttk.Label(mainframe, text="Heating:")
-heating_running_label = ttk.Label(mainframe, text="Running")
+heating_running_label = ttk.Label(mainframe, text="",foreground="red")
 heating_setpoint_label = ttk.Label(mainframe, text="Temp setpoint")
 heating_setpoint = StringVar()
 heating_setpoint_entry = ttk.Entry(mainframe, textvariable=heating_setpoint)
@@ -205,10 +356,10 @@ heating_current = ttk.Label(mainframe, text="20")
 heating_elapsed_time_label = ttk.Label(mainframe, text="Elapsed time")
 heating_elapsed_time = ttk.Label(mainframe, text="00:00:00")
 heating_start_button = ttk.Button(mainframe, text="Start", command=heating_start)
-heating_stop_button = ttk.Button(mainframe, text="Stop", command=heating_stop)
+heating_stop_button = ttk.Button(mainframe, text="Stop", command=heating_stop, state=DISABLED)
 
 brewing_label = ttk.Label(mainframe, text="Brewing:")
-brewing_running_label = ttk.Label(mainframe, text="Running")
+brewing_running_label = ttk.Label(mainframe, text="",foreground="red")
 brewing_time_label = ttk.Label(mainframe, text="Number of minutes at each temperature")
 brewing_time1 = StringVar()
 brewing_time1_entry = ttk.Entry(mainframe, textvariable=brewing_time1)
@@ -251,11 +402,11 @@ brewing_current_label = ttk.Label(mainframe, text="Current temp")
 brewing_current = ttk.Label(mainframe, text="20")
 brewing_elapsed_time_label = ttk.Label(mainframe, text="Elapsed time")
 brewing_elapsed_time = ttk.Label(mainframe, text="00:00:00")
-brewing_stop_button = ttk.Button(mainframe, text="Start", command=brewing_stop)
-brewing_start_button = ttk.Button(mainframe, text="Stop", command=brewing_start)
+brewing_stop_button = ttk.Button(mainframe, text="Stop", command=brewing_stop, state=DISABLED)
+brewing_start_button = ttk.Button(mainframe, text="Start", command=brewing_start)
 
 boiling_label = ttk.Label(mainframe, text="Boiling:")
-boiling_running_label = ttk.Label(mainframe, text="Running", background="yellow", foreground="red")
+boiling_running_label = ttk.Label(mainframe, text="",foreground="red")
 boiling_start_pump_button = ttk.Button(mainframe, text="Start pump", command=start_pump)
 boiling_stop_pump_button = ttk.Button(mainframe, text="Stop pump", command=stop_pump)
 boiling_heating_power_label = ttk.Label(mainframe, text="Heating power [%]")
@@ -265,14 +416,16 @@ boiling_heating_power.set(str(settings["boiling_heating_power"]))
 boiling_elapsed_time_label = ttk.Label(mainframe, text="Elapsed time")
 boiling_elapsed_time = ttk.Label(mainframe, text="00:00:00")
 boiling_start_button = ttk.Button(mainframe, text="Start", command=boiling_start)
-boiling_stop_button = ttk.Button(mainframe, text="Stop", command=boiling_stop)
+boiling_stop_button = ttk.Button(mainframe, text="Stop", command=boiling_stop, state=DISABLED)
 
 cooling_label = ttk.Label(mainframe, text="Cooling:")
-cooling_running_label = ttk.Label(mainframe, text="Running")
+cooling_running_label = ttk.Label(mainframe, text="",foreground="red")
 cooling_setpoint_label = ttk.Label(mainframe, text="Temp setpoint")
 cooling_setpoint = StringVar()
 cooling_setpoint_entry = ttk.Entry(mainframe, textvariable=cooling_setpoint)
 cooling_setpoint.set(str(settings["cooling_setpoint"]))
+cooling_current_label = ttk.Label(mainframe, text="Current temp")
+cooling_current = ttk.Label(mainframe, text="20")
 cooling_kp_label = ttk.Label(mainframe, text="Kp")
 cooling_kp = StringVar()
 cooling_kp_entry = ttk.Entry(mainframe, textvariable=cooling_kp)
@@ -284,7 +437,7 @@ cooling_ki.set(str(settings["cooling_ki"]))
 cooling_elapsed_time_label = ttk.Label(mainframe, text="Elapsed time")
 cooling_elapsed_time = ttk.Label(mainframe, text="00:00:00")
 cooling_start_button = ttk.Button(mainframe, text="Start", command=cooling_start)
-cooling_stop_button = ttk.Button(mainframe, text="Stop", command=cooling_stop)
+cooling_stop_button = ttk.Button(mainframe, text="Stop", command=cooling_stop, state=DISABLED)
 
 option_plot_curves_label = ttk.Label(mainframe, text="Plot curves")
 option_temp1_label = ttk.Label(mainframe, text="Temp 1")
@@ -386,6 +539,9 @@ cooling_label.grid(column=1, row=24, sticky=W, pady=5, padx=5)
 cooling_running_label.grid(column=2, row=24, sticky=W, pady=5, padx=5)
 cooling_setpoint_label.grid(column=1, row=25, sticky=W, pady=5, padx=5)
 cooling_setpoint_entry.grid(column=2, row=25, sticky=W, pady=5, padx=5)
+cooling_current_label.grid(column=3, row=25, sticky=W, pady=5, padx=5)
+cooling_current.grid(column=4, row=25, sticky=W, pady=5, padx=5)
+
 cooling_kp_label.grid(column=1, row=26, sticky=W, pady=5, padx=5)
 cooling_kp_entry.grid(column=2, row=26, sticky=W, pady=5, padx=5)
 cooling_ki_label.grid(column=3, row=26, sticky=W, pady=5, padx=5)
