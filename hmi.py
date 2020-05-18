@@ -2,6 +2,7 @@ import getopt
 from datetime import datetime
 import json
 import time
+import os
 import threading
 from tkinter import *
 from tkinter import ttk
@@ -18,6 +19,10 @@ cooling_thread = None
 
 annotation_tags = ([])
 xref = ([])
+
+def speach_message(txt_msg):
+    os.system('echo "{0}" | festival --tts'.format(txt_msg))
+
 
 def update_settings(*args):
     heating_setpoint.set(str(settings["heating_setpoint"]))
@@ -103,6 +108,7 @@ def heating():
 def heating_start(*args):
     global heating_running
     global heating_thread
+    speach_message("Heating started")
     heating_running_label.configure(text="Running", foreground="red")
     heating_stop_button.configure(state=NORMAL)
     heating_start_button.configure(state=DISABLED)
@@ -116,6 +122,7 @@ def heating_start(*args):
 def heating_stop(*args):
     global heating_running
     global heating_thread
+    speach_message("Heating ended")
     heating_running_label.configure(text="")
     heating_stop_button.configure(state=DISABLED)
     heating_start_button.configure(state=NORMAL)
@@ -134,6 +141,9 @@ def brewing():
     temp_setpoint = settings["brewing_temp"][time_idx]
     next_change_of_temp = time_extend
     time_idx += 1
+    no_of_messages = len(settings["message_time"])
+    print("Number of messages", no_of_messages)
+    msg_idx = 0
     print("Temp setpoint: ", temp_setpoint, time_extend)
     while brewing_running and time_idx < 4 and time_extend != 0 :
         # Print elapsed time
@@ -150,6 +160,12 @@ def brewing():
             temp_setpoint = settings["brewing_temp"][time_idx]
             print("Temp setpoint: ", temp_setpoint)
             time_idx += 1
+
+        # Check for new message
+        if msg_idx < no_of_messages:
+            if time.time() - start_time > settings["message_time"][msg_idx]*60 :
+                speach_message(settings["message_text"][msg_idx])
+                msg_idx += 1
         time.sleep(0.1)
     # Exit thread
     brewing_stop()
@@ -158,6 +174,7 @@ def brewing():
 def brewing_start(*args):
     global brewing_running
     global brewing_thread
+    speach_message("Brewing started")
     brewing_running_label.configure(text="Running", foreground="red")
     brewing_stop_button.configure(state=NORMAL)
     heating_start_button.configure(state=DISABLED)
@@ -171,6 +188,7 @@ def brewing_start(*args):
 def brewing_stop(*args):
     global brewing_running
     global brewing_thread
+    speach_message("Brewing ended")
     brewing_running_label.configure(text="")
     brewing_stop_button.configure(state=DISABLED)
     heating_start_button.configure(state=NORMAL)
@@ -195,6 +213,7 @@ def boiling():
 def boiling_start(*args):
     global boiling_running
     global boiling_thread
+    speach_message("Boiling started")
     boiling_running_label.configure(text="Running", foreground="red")
     boiling_stop_button.configure(state=NORMAL)
     heating_start_button.configure(state=DISABLED)
@@ -208,6 +227,7 @@ def boiling_start(*args):
 def boiling_stop(*args):
     global boiling_running
     global boiling_thread
+    speach_message("Boiling ended")
     boiling_running_label.configure(text="")
     boiling_stop_button.configure(state=DISABLED)
     heating_start_button.configure(state=NORMAL)
@@ -232,6 +252,7 @@ def cooling():
 def cooling_start(*args):
     global cooling_running
     global cooling_thread
+    speach_message("Cooling started")
     cooling_running_label.configure(text="Running", foreground="red")
     cooling_stop_button.configure(state=NORMAL)
     heating_start_button.configure(state=DISABLED)
@@ -245,6 +266,7 @@ def cooling_start(*args):
 def cooling_stop(*args):
     global cooling_running
     global cooling_thread
+    speach_message("Cooling ended")
     cooling_running_label.configure(text="")
     cooling_stop_button.configure(state=DISABLED)
     heating_start_button.configure(state=NORMAL)
@@ -326,8 +348,7 @@ def save_file(*args):
 # Read default settings
 with open("default_settings.json", mode="r+") as jsonFile:
     settings = json.load(jsonFile)
-    print("Default settings: ", xref)
-
+    print("Default settings: ", settings)
 
 root = Tk()
 root.title("Garasjebryggeriet")
@@ -598,6 +619,8 @@ selected_file_label['textvariable'] = raw_sequence
 raw_sequence.set('No file selected')
 
 tag_lbox.bind('<Double-1>', select_tag)
+
+speach_message("Welcome to garasjebryggeriet, the best brewery in Kongsberg")
 
 # get the path to the base directory
 base_directory = "/home/vidar/projects/knowme/data/"
