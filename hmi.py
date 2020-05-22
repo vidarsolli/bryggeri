@@ -7,11 +7,15 @@ import threading
 from tkinter import *
 from tkinter import ttk
 from tkinter import filedialog, messagebox
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
 
 heating_running = False
 heating_thread = None
 brewing_running = False
 brewing_thread = None
+brewing_elapsed_time = 0.0
 boiling_running = False
 boiling_thread = None
 cooling_running = False
@@ -19,6 +23,47 @@ cooling_thread = None
 
 annotation_tags = ([])
 xref = ([])
+
+def plotting_thread( a ):
+    global brewing_elapsed_time
+    global brewing_running
+    print("plotting thread started")
+    # Find total brewing time
+    brewing_time = np.array(settings["brewing_time"])
+    # Data for plotting
+    plot_width = 200
+    # Calculate time steps
+    t = np.arange(0.0, np.sum(brewing_time), np.sum(brewing_time)/plot_width)
+    tmp = np.zeros(len(t))
+    spt = np.zeros(len(t))
+    fig, ax = plt.subplots()
+    ax.set(xlabel='time (min)', ylabel='temp (C)', title='Temperature log')
+    ax.grid()
+    plt.ylim(0,100)
+    plt.ion()
+    ax.plot(t, tmp)
+    # Plot the setpoint
+    idx = 0
+    acc_t = settings["brewing_time"][0]
+    for i in range(len(t)):
+        spt[i] = settings["brewing_temp"][idx]
+        if t[i] > acc_t:
+            acc_t += settings["brewing_time"][idx]
+            idx += 1
+            if idx >= len(settings["brewing_time"]):
+                idx = len(settings["brewing_time"]) - 1
+    ax.plot(t, spt)
+    plt.pause(0.0001)
+    #plt.show()
+    plt.pause(0.0001)
+    idx = 0
+    while brewing_running and idx < plot_width:
+        tmp[idx] = 50 + 10 * np.sin(2 * np.pi * t[idx])
+        idx += 1
+        time.sleep(np.sum(brewing_time)/plot_width)
+        ax.plot(t, tmp)
+        plt.pause(0.0001)
+
 
 def speach_message(txt_msg):
     os.system('echo "{0}" | festival --tts'.format(txt_msg))
@@ -134,6 +179,8 @@ def heating_stop(*args):
 def brewing():
     global brewing_running
     global brewing_thread
+
+    threading.Thread(target=plotting_thread, args=(0,)).start()
     start_time = time.time()
     last_time = time.time()
     time_idx = 0
@@ -146,9 +193,9 @@ def brewing():
     msg_idx = 0
     print("Temp setpoint: ", temp_setpoint, time_extend)
     while brewing_running and time_idx < 4 and time_extend != 0 :
+        elapsed_time = time.time() - start_time
         # Print elapsed time
         if time.time() - last_time > 1.:
-            elapsed_time = time.time()-start_time
             brewing_elapsed_time.configure(text=time.strftime('%H:%M:%S', time.gmtime(elapsed_time)))
             last_time = time.time()
         # Run temp regulator
@@ -161,11 +208,12 @@ def brewing():
             print("Temp setpoint: ", temp_setpoint)
             time_idx += 1
 
-        # Check for new message
+        # Check for new voice message
         if msg_idx < no_of_messages:
             if time.time() - start_time > settings["message_time"][msg_idx]*60 :
                 speach_message(settings["message_text"][msg_idx])
                 msg_idx += 1
+
         time.sleep(0.1)
     # Exit thread
     brewing_stop()
@@ -471,37 +519,6 @@ plot_curves = StringVar()
 option_plot_curves = ttk.Checkbutton(mainframe, text="Plot", variable=plot_curves)
 
 
-
-file_label = ttk.Label(mainframe, text="File reference:")
-select_button = ttk.Button(mainframe, text="Select", command=select_file)
-selected_file_label = ttk.Label(mainframe, text="-")
-start_time_label = ttk.Label(mainframe, text="Start time")
-end_time_label = ttk.Label(mainframe, text="End time")
-start_time = StringVar()
-start_time_entry = ttk.Entry(mainframe, textvariable=start_time)
-start_time.set("00:00:00:00")
-end_time = StringVar()
-end_time_entry = ttk.Entry(mainframe, textvariable=end_time)
-end_time.set("00:00:00:00")
-save_button = ttk.Button(mainframe, text="Save", command=save_file)
-significance_label = ttk.Label(mainframe, text="Significance:")
-sound_label = ttk.Label(mainframe, text="Sound")
-sound_scale = ttk.Scale(mainframe, orient=HORIZONTAL, length=200, from_=0.0, to=1.0)
-sound_scale.set(1.0)
-face_label = ttk.Label(mainframe, text="Face")
-face_scale = ttk.Scale(mainframe, orient=HORIZONTAL, length=200, from_=0.0, to=1.0)
-face_scale.set(1.0)
-gesture_label = ttk.Label(mainframe, text="Gesture")
-gesture_scale = ttk.Scale(mainframe, orient=HORIZONTAL, length=200, from_=0.0, to=1.0)
-gesture_scale.set(1.0)
-annotation_tag_label = ttk.Label(mainframe, text="Select annotation tag:")
-selected_tag_label = ttk.Label(mainframe, text="No annotation tag selected")
-tags = StringVar(value=annotation_tags)
-tag_lbox = Listbox(mainframe, listvariable=tags, height=5)
-tag_lbox.selection_set(0)
-
-
-
 # Position all Widgets
 read_settings_label.grid(column=1, row=1, sticky=W, pady=5, padx=5)
 read_settings_button.grid(column=1, row=2, sticky=W, pady=5, padx=5)
@@ -581,45 +598,6 @@ option_temp1.grid(column=2, row=31, sticky=W, pady=5, padx=5)
 option_temp2.grid(column=3, row=31, sticky=W, pady=5, padx=5)
 option_temp3.grid(column=4, row=31, sticky=W, pady=5, padx=5)
 
-"""
-file_label.grid(column=1, row=3, sticky=W, pady=5, padx=5)
-select_button.grid(column=1, row=4, sticky=W, pady=5, padx=5)
-selected_file_label.grid(column=2, row=4, columnspan=2, sticky=W, pady=5, padx=5)
-start_time_label.grid(column=1, row=5, sticky=W, pady=5, padx=5)
-end_time_label.grid(column=2, row=5, sticky=W, pady=5, padx=5)
-start_time_entry.grid(column=1, row=6, sticky=W, pady=5, padx=5)
-end_time_entry.grid(column=2, row=6, sticky=W, pady=5, padx=5)
-significance_label.grid(column=1, row=7, sticky=W, pady=5, padx=5)
-sound_label.grid(column=1, row=8, sticky=W, pady=5, padx=5)
-sound_scale.grid(column=2, row=8, sticky=W, pady=5, padx=5)
-
-face_label.grid(column=1, row=9, sticky=W, pady=5, padx=5)
-face_scale.grid(column=2, row=9, sticky=W, pady=5, padx=5)
-gesture_label.grid(column=1, row=10, sticky=W, pady=5, padx=5)
-gesture_scale.grid(column=2, row=10, sticky=W, pady=5, padx=5)
-annotation_tag_label.grid(column=1, row=11, columnspan=2, sticky=W, pady=5, padx=5)
-selected_tag_label.grid(column=2, row=12, sticky=W, pady=5, padx=5)
-tag_lbox.grid(column=1, row=12, columnspan=2, sticky=W, pady=5, padx=5)
-
-save_button.grid(column=2, row=13, sticky=E, pady=5, padx=5)
-"""
-
-# Disable the file button, a person must have been selected before it can turn active
-select_button.configure(state=DISABLED)
-# Disable the save button, a tag must have been selected before it can turn active
-save_button.configure(state=DISABLED)
-tag_lbox.configure(state=DISABLED)
-
-selected_tag = StringVar()
-selected_tag_label['textvariable'] = selected_tag
-selected_tag.set("No tag selected")
-
-raw_sequence = StringVar()
-selected_file_label['textvariable'] = raw_sequence
-raw_sequence.set('No file selected')
-
-tag_lbox.bind('<Double-1>', select_tag)
-
 speach_message("Welcome to garasjebryggeriet, the best brewery in Kongsberg")
 
 # get the path to the base directory
@@ -636,5 +614,6 @@ for o, a in myOpts:
         base_directory = a
 
 print("Base directory selected: ", base_directory)
+
 
 root.mainloop()
