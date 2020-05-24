@@ -29,7 +29,6 @@ heating_thread = None
 heating_power = 5.0
 brewing_running = False
 brewing_thread = None
-brewing_plotting_thread = None
 brewing_elapsed_time = 0.0
 brewing_heating_level = 0.0
 boiling_running = False
@@ -52,6 +51,7 @@ plot_temp = np.zeros(1)
 plot_time = np.zeros(1)
 plot_setp = np.zeros(1)
 plot_powr = np.zeros(1)
+clear_plot = False
 
 
 def plotting(args):
@@ -75,13 +75,19 @@ def plotting(args):
     # animation function.  This is called sequentially
     def animate(i):
         global idx
-        global plot_temp, plot_time, plot_setp, plot_powr
+        global plot_temp, plot_time, plot_setp, plot_powr, clear_plot
+        if clear_plot:
+            clear_plot = False
+            idx = 0
+            plot_temp = []
+            plot_time = []
+            plot_setp = []
+            plot_powr = []
         point = temp_q.get()
         plot_temp = np.append(plot_temp,point[1])
         plot_time = np.append(plot_time, point[0]/60.0)
         plot_setp = np.append(plot_setp, point[2])
         plot_powr = np.append(plot_powr, 20.0 + point[3]*(max(settings["brewing_temp"])+10.0-20.0))
-        #print(x[idx], plot_temp[idx])
         idx += 1
         xlist = [plot_time, plot_time, plot_time]
         ylist = [plot_temp, plot_setp, plot_powr]
@@ -180,6 +186,10 @@ def update_settings(*args):
     brewing_temp2.set(str(settings["brewing_temp"][1]))
     brewing_temp3.set(str(settings["brewing_temp"][2]))
     brewing_temp4.set(str(settings["brewing_temp"][3]))
+    brewing_kp.set(str(settings["brewing_kp"]))
+    brewing_ki.set(str(settings["brewing_ki"]))
+    brewing_kd.set(str(settings["brewing_kd"]))
+    brewing_use_pid.set(str(settings["brewing_pid"]))
     brewing_increase_lim.set(str(settings["brewing_increase_lim"]))
     brewing_decrease_lim.set(str(settings["brewing_decrease_lim"]))
     brewing_pump_speed.set(str(settings["brewing_pump_speed"]))
@@ -198,9 +208,13 @@ def set_settings(*args):
     settings["brewing_temp"][1] = int(brewing_temp2.get())
     settings["brewing_temp"][2] = int(brewing_temp3.get())
     settings["brewing_temp"][3] = int(brewing_temp4.get())
+    settings["brewing_pid"] = float(brewing_use_pid.get())
+    settings["brewing_kp"] = float(brewing_kp.get())
+    settings["brewing_ki"] = float(brewing_ki.get())
+    settings["brewing_kd"] = float(brewing_kd.get())
     settings["brewing_increase_lim"] = float(brewing_increase_lim.get())
     settings["brewing_decrease_lim"] = float(brewing_decrease_lim.get())
-    settings["brewing_pump_speed"] = int(brewing_pump_speed.get())
+    settings["brewing_pump_speed"] = float(brewing_pump_speed.get())
     settings["cooling_setpoint"] = float(cooling_setpoint.get())
     settings["cooling_kp"] = float(cooling_kp.get())
     settings["cooling_ki"] = float(cooling_ki.get())
@@ -281,22 +295,13 @@ def brewing():
     global brewing_running
     global brewing_thread
     global brewing_heating_level
-    global brewing_plotting_thread
     global pump1_speed
     global temp_q
-    global setpoint_q
 
     # Setup the PID regulator
-    P = 10
-    I = 2
-    D = 1
-
-    pid = PID.PID(P, I, D)
+    pid = PID.PID(settings["brewing_kp"], settings["brewing_ki"], settings["brewing_kd"])
     pid.setSampleTime(1)
     pid.SetPoint = settings["brewing_temp"][0]
-
-    if not brewing_plotting_thread:
-        brewing_plotting_thread = threading.Thread(target=plotting, args=(0,)).start()
 
     start_time = time.time()
     last_time = time.time()
@@ -315,7 +320,7 @@ def brewing():
     while brewing_running and time_idx < 4 and time_extend != 0 :
         # Update settings in case someting has changed
         set_settings()
-        pump1_speed = float(brewing_pump_speed.get())
+        pump1_speed = float(brewing_pump_speed.get())/100.0
         elapsed_time = time.time() - start_time
         # Print elapsed time
         if time.time() - last_time > 1.:
@@ -323,20 +328,22 @@ def brewing():
             last_time = time.time()
 
         # Run temp regulator
-        pid.setKp(settings["brewing_increase_lim"])
-        pid.setKi(settings["brewing_decrease_lim"])
-        pid.setKd(0.0)
-
         temp = float(brewing_temp.get())
-        pid.SetPoint = temp_setpoint
-        pid.update(temp)
-        brewing_heating_level = max(min( pid.output/100.0, 1.0 ),0.0)
-        """     
-        if temp - temp_setpoint > settings["brewing_decrease_lim"]:
-            brewing_heating_level = 0.0
-        if temp_setpoint - temp > settings["brewing_increase_lim"]:
-            brewing_heating_level = 1.0
-        """
+        if settings["brewing_pid"]:
+            pid.setKp(settings["brewing_kp"])
+            pid.setKi(settings["brewing_ki"])
+            pid.setKd(settings["brewing_kd"])
+
+            temp = float(brewing_temp.get())
+            pid.SetPoint = temp_setpoint
+            pid.update(temp)
+            brewing_heating_level = max(min( pid.output/100.0, 1.0 ),0.0)
+        else:
+            if temp - temp_setpoint > settings["brewing_decrease_lim"]:
+                brewing_heating_level = 0.0
+            if temp_setpoint - temp > settings["brewing_increase_lim"]:
+                brewing_heating_level = 1.0
+
         # Check if change in temp
         if time.time() - start_time >= next_change_of_temp:
             time_idx += 1
@@ -381,6 +388,7 @@ def brewing_stop(*args):
     global brewing_thread
     global brewing_heating_level
     global pump1_speed
+    global clear_plot
     speach_message("Brewing ended")
     brewing_running_label.configure(text="")
     brewing_stop_button.configure(state=DISABLED)
@@ -389,6 +397,7 @@ def brewing_stop(*args):
     boiling_start_button.configure(state=NORMAL)
     cooling_start_button.configure(state=NORMAL)
     brewing_running = False
+    clear_plot = True
     brewing_heating_level = 0.0
     pump1_speed = 0.0
 
@@ -606,7 +615,20 @@ brewing_temp3.set(str(settings["brewing_temp"][2]))
 brewing_temp4 = StringVar()
 brewing_temp4_entry = ttk.Entry(mainframe, textvariable=brewing_temp4)
 brewing_temp4.set(str(settings["brewing_temp"][3]))
-brewing_pid_label = ttk.Label(mainframe, text="Increase lim")
+brewing_pid_label = ttk.Label(mainframe, text="Use PID")
+brewing_kp_label = ttk.Label(mainframe, text="Kd")
+brewing_ki_label = ttk.Label(mainframe, text="Ki")
+brewing_kd_label = ttk.Label(mainframe, text="Kp")
+brewing_use_pid = StringVar()
+brewing_use_pid_button = ttk.Checkbutton(mainframe, text="Pid", variable=brewing_use_pid)
+brewing_kp = StringVar()
+brewing_kp_entry = ttk.Entry(mainframe, textvariable=brewing_kp)
+brewing_ki = StringVar()
+brewing_ki_entry = ttk.Entry(mainframe, textvariable=brewing_ki)
+brewing_kd = StringVar()
+brewing_kd_entry = ttk.Entry(mainframe, textvariable=brewing_kd)
+
+
 brewing_increase_lim_label = ttk.Label(mainframe, text="Increase lim")
 brewing_increase_lim = StringVar()
 brewing_increase_lim_entry = ttk.Entry(mainframe, textvariable=brewing_increase_lim)
@@ -777,6 +799,16 @@ info_pump2.grid(column=2, row=33, sticky=W, pady=5, padx=5)
 info_brewing_heater.grid(column=3, row=33, sticky=W, pady=5, padx=5)
 info_boiling_heater.grid(column=4, row=33, sticky=W, pady=5, padx=5)
 
+brewing_pid_label.grid(column=1, row=34, sticky=W, pady=5, padx=5)
+brewing_kp_label.grid(column=2, row=34, sticky=W, pady=5, padx=5)
+brewing_ki_label.grid(column=3, row=34, sticky=W, pady=5, padx=5)
+brewing_kd_label.grid(column=4, row=34, sticky=W, pady=5, padx=5)
+brewing_use_pid_button.grid(column=1, row=35, sticky=W, pady=5, padx=5)
+brewing_kp_entry.grid(column=2, row=35, sticky=W, pady=5, padx=5)
+brewing_ki_entry.grid(column=3, row=35, sticky=W, pady=5, padx=5)
+brewing_kd_entry.grid(column=4, row=35, sticky=W, pady=5, padx=5)
+
+
 
 speach_message("Welcome to garasjebryggeriet, the best brewery in Kongsberg")
 
@@ -814,7 +846,7 @@ threading.Thread(target=brewing_heater_thread, args=(BREWING_HEATER_BIT,)).start
 threading.Thread(target=boiling_heater_thread, args=(BOILING_HEATER_BIT,)).start()
 threading.Thread(target=pump1_thread, args=(PUMP1_BIT,)).start()
 threading.Thread(target=pump2_thread, args=(PUMP2_BIT,)).start()
-
+threading.Thread(target=plotting, args=(0,)).start()
 
 # get the path to the base directory
 base_directory = "/home/vidar/projects/knowme/data/"
