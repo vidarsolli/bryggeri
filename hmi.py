@@ -10,19 +10,100 @@ from tkinter import filedialog, messagebox
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+from w1thermsensor import W1ThermSensor
+import RPi.GPIO as gpio
+
+BREWING_HEATER_BIT = 17
+BOILING_HEATER_BIT = 18
+PUMP1_BIT = 19
+PUMP2_BIT = 20
 
 heating_running = False
 heating_thread = None
+
+heating_power = 5.0
 brewing_running = False
 brewing_thread = None
 brewing_elapsed_time = 0.0
+brewing_heating_level = 0.0
 boiling_running = False
 boiling_thread = None
+boiling_heating_level = 0.0
 cooling_running = False
 cooling_thread = None
 
+pump1_speed = 0 # from 0.0 - 1.0
+pump2_speed = 0
+
+
 annotation_tags = ([])
 xref = ([])
+
+def temperature_thread( a ):
+    while True:
+        heating_temp.set(heating_sensor.get_temperature())
+        heating_current['text'] = heating_sensor.get_temperature()
+        brewing_temp.set(brewing_sensor.get_temperature())
+        brewing_current['text'] = brewing_sensor.get_temperature()
+        cooling_temp.set(cooling_sensor.get_temperature())
+        cooling_current['text'] = cooling_sensor.get_temperature()
+        time.sleep(0.5)
+
+def brewing_heater_thread( port ):
+    full_time = 1.0
+    while True:
+        power = min(brewing_heating_level, 1.0)
+        info_brewing_heater["text"] = str(power)
+        if power == 1.0:
+            gpio.output(BREWING_HEATER_BIT, gpio.LOW)
+            time.sleep(full_time)
+        else:
+            gpio.output(BREWING_HEATER_BIT, gpio.LOW)
+            time.sleep(power*full_time)
+            gpio.output(BREWING_HEATER_BIT, gpio.HIGH)
+            time.sleep((1.0-power)*full_time)
+
+def boiling_heater_thread( port ):
+    full_time = 1.0
+    while True:
+        power = min(boiling_heating_level, 1.0)
+        info_boiling_heater["text"] = str(power)
+        if power == 1.0:
+            gpio.output(BOILING_HEATER_BIT, gpio.LOW)
+            time.sleep(full_time)
+        else:
+            gpio.output(BOILING_HEATER_BIT, gpio.LOW)
+            time.sleep(power*full_time)
+            gpio.output(BOILING_HEATER_BIT, gpio.HIGH)
+            time.sleep((1.0-power)*full_time)
+
+def pump1_thread( port ):
+    full_time = 1.0
+    while True:
+        power = min(pump1_speed, 1.0)
+        info_pump1["text"] = str(power)
+        if power == 1.0:
+            gpio.output(PUMP1_BIT, gpio.LOW)
+            time.sleep(full_time)
+        else:
+            gpio.output(PUMP1_BIT, gpio.LOW)
+            time.sleep(power*full_time)
+            gpio.output(PUMP1_BIT, gpio.HIGH)
+            time.sleep((1.0-power)*full_time)
+
+def pump2_thread( port ):
+    full_time = 1.0
+    while True:
+        power = min(pump2_speed, 1.0)
+        info_pump2["text"] = str(power)
+        if power == 1.0:
+            gpio.output(PUMP2_BIT, gpio.LOW)
+            time.sleep(full_time)
+        else:
+            gpio.output(PUMP2_BIT, gpio.LOW)
+            time.sleep(power*full_time)
+            gpio.output(PUMP2_BIT, gpio.HIGH)
+            time.sleep((1.0-power)*full_time)
 
 def plotting_thread( a ):
     global brewing_elapsed_time
@@ -179,8 +260,9 @@ def heating_stop(*args):
 def brewing():
     global brewing_running
     global brewing_thread
+    global brewing_heating_level
 
-    threading.Thread(target=plotting_thread, args=(0,)).start()
+    #threading.Thread(target=plotting_thread, args=(0,)).start()
     start_time = time.time()
     last_time = time.time()
     time_idx = 0
@@ -193,12 +275,19 @@ def brewing():
     msg_idx = 0
     print("Temp setpoint: ", temp_setpoint, time_extend)
     while brewing_running and time_idx < 4 and time_extend != 0 :
+        # Update settings in case someting has changed
+        set_settings()
         elapsed_time = time.time() - start_time
         # Print elapsed time
         if time.time() - last_time > 1.:
             brewing_elapsed_time.configure(text=time.strftime('%H:%M:%S', time.gmtime(elapsed_time)))
             last_time = time.time()
         # Run temp regulator
+        temp = float(brewing_temp.get())
+        if temp - temp_setpoint > settings["brewing_decrease_lim"]:
+            brewing_heating_level = 0.0
+        if temp_setpoint - temp > settings["brewing_increase_lim"]:
+            brewing_heating_level = 1.0
 
         # Check if change in temp
         if time.time() - start_time >= next_change_of_temp:
@@ -236,6 +325,7 @@ def brewing_start(*args):
 def brewing_stop(*args):
     global brewing_running
     global brewing_thread
+    global brewing_heating_level
     speach_message("Brewing ended")
     brewing_running_label.configure(text="")
     brewing_stop_button.configure(state=DISABLED)
@@ -244,6 +334,7 @@ def brewing_stop(*args):
     boiling_start_button.configure(state=NORMAL)
     cooling_start_button.configure(state=NORMAL)
     brewing_running = False
+    brewing_heating_level = 0.0
 
 def boiling():
     global boiling_running
@@ -275,6 +366,7 @@ def boiling_start(*args):
 def boiling_stop(*args):
     global boiling_running
     global boiling_thread
+    global boiling_heating_level
     speach_message("Boiling ended")
     boiling_running_label.configure(text="")
     boiling_stop_button.configure(state=DISABLED)
@@ -283,6 +375,8 @@ def boiling_stop(*args):
     boiling_start_button.configure(state=NORMAL)
     cooling_start_button.configure(state=NORMAL)
     boiling_running = False
+    boiling_heating_power.set("0.0")
+    boiling_heating_level = 0.0
 
 def cooling():
     global cooling_running
@@ -509,14 +603,32 @@ cooling_start_button = ttk.Button(mainframe, text="Start", command=cooling_start
 cooling_stop_button = ttk.Button(mainframe, text="Stop", command=cooling_stop, state=DISABLED)
 
 option_plot_curves_label = ttk.Label(mainframe, text="Plot curves")
-option_temp1_label = ttk.Label(mainframe, text="Temp 1")
-option_temp2_label = ttk.Label(mainframe, text="Temp 2")
-option_temp3_label = ttk.Label(mainframe, text="Temp 3")
+option_temp1_label = ttk.Label(mainframe, text="Heating temp")
+option_temp2_label = ttk.Label(mainframe, text="Brewing temp")
+option_temp3_label = ttk.Label(mainframe, text="Cooling temp")
+
+heating_temp = StringVar()
 option_temp1 = ttk.Label(mainframe, text="0.0")
+option_temp1['textvariable'] = heating_temp
+brewing_temp = StringVar()
 option_temp2 = ttk.Label(mainframe, text="0.0")
+option_temp2['textvariable'] = brewing_temp
+cooling_temp = StringVar()
 option_temp3 = ttk.Label(mainframe, text="0.0")
+option_temp3['textvariable'] = cooling_temp
 plot_curves = StringVar()
 option_plot_curves = ttk.Checkbutton(mainframe, text="Plot", variable=plot_curves)
+
+info_pump1_label = ttk.Label(mainframe, text="Pump1 speed [%]")
+info_pump2_label = ttk.Label(mainframe, text="Pump2 speed [%]")
+info_brewing_heater_label = ttk.Label(mainframe, text="Brewing heater power [%]")
+info_boiling_heater_label = ttk.Label(mainframe, text="Boiling heater power [%]")
+info_pump1 = ttk.Label(mainframe, text="0.0")
+info_pump2 = ttk.Label(mainframe, text="0.0")
+info_brewing_heater = ttk.Label(mainframe, text="0.0")
+info_boiling_heater = ttk.Label(mainframe, text="0.0")
+
+
 
 
 # Position all Widgets
@@ -598,7 +710,53 @@ option_temp1.grid(column=2, row=31, sticky=W, pady=5, padx=5)
 option_temp2.grid(column=3, row=31, sticky=W, pady=5, padx=5)
 option_temp3.grid(column=4, row=31, sticky=W, pady=5, padx=5)
 
+info_pump1_label.grid(column=1, row=32, sticky=W, pady=5, padx=5)
+info_pump2_label.grid(column=2, row=32, sticky=W, pady=5, padx=5)
+info_brewing_heater_label.grid(column=3, row=32, sticky=W, pady=5, padx=5)
+info_boiling_heater_label.grid(column=4, row=32, sticky=W, pady=5, padx=5)
+info_pump1.grid(column=1, row=33, sticky=W, pady=5, padx=5)
+info_pump2.grid(column=2, row=33, sticky=W, pady=5, padx=5)
+info_brewing_heater.grid(column=3, row=33, sticky=W, pady=5, padx=5)
+info_boiling_heater.grid(column=4, row=33, sticky=W, pady=5, padx=5)
+
+
 speach_message("Welcome to garasjebryggeriet, the best brewery in Kongsberg")
+
+# print sensor ID's
+sensors = W1ThermSensor.get_available_sensors()
+print("The following temperature sensors are connected:")
+print(sensors[0].id)
+print(sensors[1].id)
+print(sensors[2].id)
+print("Heating sensor id: ", settings["heating_sensor"])
+print("Brewing sensor id: ", settings["brewing_sensor"])
+print("Cooling sensor id: ", settings["cooling_sensor"])
+
+heating_sensor = W1ThermSensor(W1ThermSensor.THERM_SENSOR_DS18B20, settings["heating_sensor"])
+brewing_sensor = W1ThermSensor(W1ThermSensor.THERM_SENSOR_DS18B20, settings["brewing_sensor"])
+cooling_sensor = W1ThermSensor(W1ThermSensor.THERM_SENSOR_DS18B20, settings["cooling_sensor"])
+heating_temp.set(heating_sensor.get_temperature())
+brewing_temp.set(brewing_sensor.get_temperature())
+cooling_temp.set(cooling_sensor.get_temperature())
+
+threading.Thread(target=temperature_thread, args=(0,)).start()
+
+# Setup GPIO bits
+gpio.setmode(gpio.BCM)
+gpio.setup(BREWING_HEATER_BIT, gpio.OUT)
+gpio.output(BREWING_HEATER_BIT, gpio.HIGH)
+gpio.setup(BOILING_HEATER_BIT, gpio.OUT)
+gpio.output(BOILING_HEATER_BIT, gpio.HIGH)
+gpio.setup(PUMP1_BIT, gpio.OUT)
+gpio.output(PUMP1_BIT, gpio.HIGH)
+gpio.setup(PUMP2_BIT, gpio.OUT)
+gpio.output(PUMP2_BIT, gpio.HIGH)
+
+threading.Thread(target=brewing_heater_thread, args=(BREWING_HEATER_BIT,)).start()
+threading.Thread(target=boiling_heater_thread, args=(BOILING_HEATER_BIT,)).start()
+threading.Thread(target=pump1_thread, args=(PUMP1_BIT,)).start()
+threading.Thread(target=pump2_thread, args=(PUMP2_BIT,)).start()
+
 
 # get the path to the base directory
 base_directory = "/home/vidar/projects/knowme/data/"
