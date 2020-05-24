@@ -3,15 +3,20 @@ from datetime import datetime
 import json
 import time
 import os
+# https://onion.io/2bt-pid-control-python/
+import PID
+import queue
 import threading
 from tkinter import *
 from tkinter import ttk
 from tkinter import filedialog, messagebox
 import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 import numpy as np
 from w1thermsensor import W1ThermSensor
 import RPi.GPIO as gpio
+
 
 BREWING_HEATER_BIT = 17
 BOILING_HEATER_BIT = 18
@@ -24,6 +29,7 @@ heating_thread = None
 heating_power = 5.0
 brewing_running = False
 brewing_thread = None
+brewing_plotting_thread = None
 brewing_elapsed_time = 0.0
 brewing_heating_level = 0.0
 boiling_running = False
@@ -32,12 +38,67 @@ boiling_heating_level = 0.0
 cooling_running = False
 cooling_thread = None
 
-pump1_speed = 0 # from 0.0 - 1.0
-pump2_speed = 0
+pump1_speed = 0.0 # from 0.0 - 1.0
+pump2_speed = 0.0
 
 
 annotation_tags = ([])
 xref = ([])
+
+temp_q = queue.Queue()
+setpoint_q = queue.Queue()
+idx = 0
+plot_temp = np.zeros(1)
+plot_time = np.zeros(1)
+plot_setp = np.zeros(1)
+plot_powr = np.zeros(1)
+
+
+def plotting(args):
+    # First set up the figure, the axis, and the plot element we want to animate
+    fig = plt.figure()
+    ax = plt.axes(xlim=(0, int(np.sum(settings["brewing_time"]))), ylim=(20.0, max(settings["brewing_temp"])+10.0))
+    plt.xlabel('Time [mimn]')
+    plt.ylabel('Temp [C]')
+    plotlays, plotcolors = [3], ["black","red", "green"]
+    lines = []
+    for index in range(3):
+        lobj = ax.plot([], [], lw=1, color=plotcolors[index])[0]
+        lines.append(lobj)
+
+    # initialization function: plot the background of each frame
+    def init():
+        for line in lines:
+            line.set_data([], [])
+        return lines
+
+    # animation function.  This is called sequentially
+    def animate(i):
+        global idx
+        global plot_temp, plot_time, plot_setp, plot_powr
+        point = temp_q.get()
+        plot_temp = np.append(plot_temp,point[1])
+        plot_time = np.append(plot_time, point[0]/60.0)
+        plot_setp = np.append(plot_setp, point[2])
+        plot_powr = np.append(plot_powr, 20.0 + point[3]*(max(settings["brewing_temp"])+10.0-20.0))
+        #print(x[idx], plot_temp[idx])
+        idx += 1
+        xlist = [plot_time, plot_time, plot_time]
+        ylist = [plot_temp, plot_setp, plot_powr]
+        for lnum, line in enumerate(lines):
+            line.set_data([xlist[lnum], ylist[lnum]])
+        return lines
+
+        #temp_line.set_data(plot_time, plot_temp)
+        #setp_line.set_data(plot_time, plot_temp)
+        #return setp_line,
+
+    # call the animator.  blit=True means only re-draw the parts that have changed.
+    anim = animation.FuncAnimation(fig, animate, init_func=init,
+                                   interval=20, blit=True)
+
+    plt.show()
+
 
 def temperature_thread( a ):
     while True:
@@ -104,47 +165,6 @@ def pump2_thread( port ):
             time.sleep(power*full_time)
             gpio.output(PUMP2_BIT, gpio.HIGH)
             time.sleep((1.0-power)*full_time)
-
-def plotting_thread( a ):
-    global brewing_elapsed_time
-    global brewing_running
-    print("plotting thread started")
-    # Find total brewing time
-    brewing_time = np.array(settings["brewing_time"])
-    # Data for plotting
-    plot_width = 200
-    # Calculate time steps
-    t = np.arange(0.0, np.sum(brewing_time), np.sum(brewing_time)/plot_width)
-    tmp = np.zeros(len(t))
-    spt = np.zeros(len(t))
-    fig, ax = plt.subplots()
-    ax.set(xlabel='time (min)', ylabel='temp (C)', title='Temperature log')
-    ax.grid()
-    plt.ylim(0,100)
-    plt.ion()
-    ax.plot(t, tmp)
-    # Plot the setpoint
-    idx = 0
-    acc_t = settings["brewing_time"][0]
-    for i in range(len(t)):
-        spt[i] = settings["brewing_temp"][idx]
-        if t[i] > acc_t:
-            acc_t += settings["brewing_time"][idx]
-            idx += 1
-            if idx >= len(settings["brewing_time"]):
-                idx = len(settings["brewing_time"]) - 1
-    ax.plot(t, spt)
-    plt.pause(0.0001)
-    #plt.show()
-    plt.pause(0.0001)
-    idx = 0
-    while brewing_running and idx < plot_width:
-        tmp[idx] = 50 + 10 * np.sin(2 * np.pi * t[idx])
-        idx += 1
-        time.sleep(np.sum(brewing_time)/plot_width)
-        ax.plot(t, tmp)
-        plt.pause(0.0001)
-
 
 def speach_message(txt_msg):
     os.system('echo "{0}" | festival --tts'.format(txt_msg))
@@ -261,41 +281,70 @@ def brewing():
     global brewing_running
     global brewing_thread
     global brewing_heating_level
+    global brewing_plotting_thread
+    global pump1_speed
+    global temp_q
+    global setpoint_q
 
-    #threading.Thread(target=plotting_thread, args=(0,)).start()
+    # Setup the PID regulator
+    P = 10
+    I = 2
+    D = 1
+
+    pid = PID.PID(P, I, D)
+    pid.setSampleTime(1)
+    pid.SetPoint = settings["brewing_temp"][0]
+
+    if not brewing_plotting_thread:
+        brewing_plotting_thread = threading.Thread(target=plotting, args=(0,)).start()
+
     start_time = time.time()
     last_time = time.time()
     time_idx = 0
     time_extend = settings["brewing_time"][time_idx]*60
     temp_setpoint = settings["brewing_temp"][time_idx]
     next_change_of_temp = time_extend
-    time_idx += 1
+
     no_of_messages = len(settings["message_time"])
     print("Number of messages", no_of_messages)
     msg_idx = 0
-    print("Temp setpoint: ", temp_setpoint, time_extend)
+
+    plot_interval = np.sum(settings["brewing_temp"])*60.0/1000.0
+    last_plot = 0.0
+
     while brewing_running and time_idx < 4 and time_extend != 0 :
         # Update settings in case someting has changed
         set_settings()
+        pump1_speed = float(brewing_pump_speed.get())
         elapsed_time = time.time() - start_time
         # Print elapsed time
         if time.time() - last_time > 1.:
             brewing_elapsed_time.configure(text=time.strftime('%H:%M:%S', time.gmtime(elapsed_time)))
             last_time = time.time()
+
         # Run temp regulator
+        pid.setKp(settings["brewing_increase_lim"])
+        pid.setKi(settings["brewing_decrease_lim"])
+        pid.setKd(0.0)
+
         temp = float(brewing_temp.get())
+        pid.SetPoint = temp_setpoint
+        pid.update(temp)
+        brewing_heating_level = max(min( pid.output/100.0, 1.0 ),0.0)
+        """     
         if temp - temp_setpoint > settings["brewing_decrease_lim"]:
             brewing_heating_level = 0.0
         if temp_setpoint - temp > settings["brewing_increase_lim"]:
             brewing_heating_level = 1.0
-
+        """
         # Check if change in temp
         if time.time() - start_time >= next_change_of_temp:
-            time_extend = settings["brewing_time"][time_idx] * 60
-            next_change_of_temp += time_extend
-            temp_setpoint = settings["brewing_temp"][time_idx]
-            print("Temp setpoint: ", temp_setpoint)
             time_idx += 1
+            if time_idx < 4 :
+                time_extend = settings["brewing_time"][time_idx] * 60
+                next_change_of_temp += time_extend
+                temp_setpoint = settings["brewing_temp"][time_idx]
+                print("Temp setpoint: ", temp_setpoint)
 
         # Check for new voice message
         if msg_idx < no_of_messages:
@@ -303,6 +352,11 @@ def brewing():
                 speach_message(settings["message_text"][msg_idx])
                 msg_idx += 1
 
+        # Check if plot data has to be updated
+        while time.time() - last_plot > plot_interval:
+            last_plot = time.time()
+            plot = [elapsed_time, temp, temp_setpoint, brewing_heating_level]
+            temp_q.put(plot)
         time.sleep(0.1)
     # Exit thread
     brewing_stop()
@@ -326,6 +380,7 @@ def brewing_stop(*args):
     global brewing_running
     global brewing_thread
     global brewing_heating_level
+    global pump1_speed
     speach_message("Brewing ended")
     brewing_running_label.configure(text="")
     brewing_stop_button.configure(state=DISABLED)
@@ -335,6 +390,8 @@ def brewing_stop(*args):
     cooling_start_button.configure(state=NORMAL)
     brewing_running = False
     brewing_heating_level = 0.0
+    pump1_speed = 0.0
+
 
 def boiling():
     global boiling_running
@@ -549,6 +606,7 @@ brewing_temp3.set(str(settings["brewing_temp"][2]))
 brewing_temp4 = StringVar()
 brewing_temp4_entry = ttk.Entry(mainframe, textvariable=brewing_temp4)
 brewing_temp4.set(str(settings["brewing_temp"][3]))
+brewing_pid_label = ttk.Label(mainframe, text="Increase lim")
 brewing_increase_lim_label = ttk.Label(mainframe, text="Increase lim")
 brewing_increase_lim = StringVar()
 brewing_increase_lim_entry = ttk.Entry(mainframe, textvariable=brewing_increase_lim)
