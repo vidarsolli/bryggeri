@@ -45,7 +45,6 @@ annotation_tags = ([])
 xref = ([])
 
 temp_q = queue.Queue()
-setpoint_q = queue.Queue()
 idx = 0
 plot_temp = np.zeros(1)
 plot_time = np.zeros(1)
@@ -58,8 +57,10 @@ def plotting(args):
     # First set up the figure, the axis, and the plot element we want to animate
     fig = plt.figure()
     ax = plt.axes(xlim=(0, int(np.sum(settings["brewing_time"]))), ylim=(20.0, max(settings["brewing_temp"])+10.0))
-    plt.xlabel('Time [mimn]')
+    fig.suptitle('Brewing temperature plot')
+    plt.xlabel('Time [min]')
     plt.ylabel('Temp [C]')
+    #plt.grid(True)
     plotlays, plotcolors = [3], ["black","red", "green"]
     lines = []
     for index in range(3):
@@ -91,6 +92,70 @@ def plotting(args):
         idx += 1
         xlist = [plot_time, plot_time, plot_time]
         ylist = [plot_temp, plot_setp, plot_powr]
+        for lnum, line in enumerate(lines):
+            line.set_data([xlist[lnum], ylist[lnum]])
+        return lines
+
+        #temp_line.set_data(plot_time, plot_temp)
+        #setp_line.set_data(plot_time, plot_temp)
+        #return setp_line,
+
+    # call the animator.  blit=True means only re-draw the parts that have changed.
+    anim = animation.FuncAnimation(fig, animate, init_func=init,
+                                   interval=20, blit=True)
+
+    plt.show()
+
+cooling_q = queue.Queue()
+cooling_idx = 0
+cooling_plot_temp = np.zeros(1)
+cooling_plot_time = np.zeros(1)
+cooling_plot_setp = np.zeros(1)
+cooling_plot_powr = np.zeros(1)
+cooling_clear_plot = False
+
+
+def cooling_plotting(args):
+    # First set up the figure, the axis, and the plot element we want to animate
+    y_min = settings["cooling_setpoint"]-10.0
+    y_max = settings["cooling_setpoint"]+10.0
+    fig = plt.figure()
+    ax = plt.axes(xlim=(0, 10), ylim=(y_min, y_max))
+    fig.suptitle('Cooling temperature plot')
+    plt.xlabel('Time [min]')
+    plt.ylabel('Temp [C]')
+    #plt.grid(True)
+    plotlays, plotcolors = [3], ["black","red", "green"]
+    lines = []
+    for index in range(3):
+        lobj = ax.plot([], [], lw=1, color=plotcolors[index])[0]
+        lines.append(lobj)
+
+    # initialization function: plot the background of each frame
+    def init():
+        for line in lines:
+            line.set_data([], [])
+        return lines
+
+    # animation function.  This is called sequentially
+    def animate(i):
+        global cooling_idx
+        global cooling_plot_temp, cooling_plot_time, cooling_plot_setp, cooling_plot_powr, cooling_clear_plot
+        if cooling_clear_plot:
+            cooling_clear_plot = False
+            cooling_idx = 0
+            cooling_plot_temp = []
+            cooling_plot_time = []
+            cooling_plot_setp = []
+            cooling_plot_powr = []
+        point = cooling_q.get()
+        cooling_plot_temp = np.append(cooling_plot_temp,point[1])
+        cooling_plot_time = np.append(cooling_plot_time, point[0]/60.0)
+        cooling_plot_setp = np.append(cooling_plot_setp, point[2])
+        cooling_plot_powr = np.append(cooling_plot_powr, y_min + point[3]*(y_max - y_min))
+        cooling_idx += 1
+        xlist = [cooling_plot_time, cooling_plot_time, cooling_plot_time]
+        ylist = [cooling_plot_temp, cooling_plot_setp, cooling_plot_powr]
         for lnum, line in enumerate(lines):
             line.set_data([xlist[lnum], ylist[lnum]])
         return lines
@@ -299,6 +364,8 @@ def brewing():
     global temp_q
 
     # Setup the PID regulator
+    set_settings()
+    pump1_speed = float(brewing_pump_speed.get()) / 100.0
     pid = PID.PID(settings["brewing_kp"], settings["brewing_ki"], settings["brewing_kd"])
     pid.setSampleTime(1)
     pid.SetPoint = settings["brewing_temp"][0]
@@ -317,7 +384,7 @@ def brewing():
     plot_interval = np.sum(settings["brewing_temp"])*60.0/1000.0
     last_plot = 0.0
 
-    while brewing_running and time_idx < 4 and time_extend != 0 :
+    while time_idx < 4 and time_extend != 0 :
         # Update settings in case someting has changed
         set_settings()
         pump1_speed = float(brewing_pump_speed.get())/100.0
@@ -364,14 +431,20 @@ def brewing():
             last_plot = time.time()
             plot = [elapsed_time, temp, temp_setpoint, brewing_heating_level]
             temp_q.put(plot)
+        if not brewing_running:
+            print("Break from the brewing thread")
+            break
         time.sleep(0.1)
+    print("Brewing thread ending")
     # Exit thread
-    brewing_stop()
+
 
 
 def brewing_start(*args):
     global brewing_running
     global brewing_thread
+    global clear_plot
+    clear_plot = True
     speach_message("Brewing started")
     brewing_running_label.configure(text="Running", foreground="red")
     brewing_stop_button.configure(state=NORMAL)
@@ -389,6 +462,7 @@ def brewing_stop(*args):
     global brewing_heating_level
     global pump1_speed
     global clear_plot
+    brewing_running = False
     speach_message("Brewing ended")
     brewing_running_label.configure(text="")
     brewing_stop_button.configure(state=DISABLED)
@@ -396,11 +470,15 @@ def brewing_stop(*args):
     brewing_start_button.configure(state=NORMAL)
     boiling_start_button.configure(state=NORMAL)
     cooling_start_button.configure(state=NORMAL)
-    brewing_running = False
+    print("Trying to kill brewing thread, wait for 5 sec")
+    time.sleep(5)
+    #brewing_thread.join()
+    print("Brewing thread is killed")
     clear_plot = True
+    """
     brewing_heating_level = 0.0
     pump1_speed = 0.0
-
+    """
 
 def boiling():
     global boiling_running
@@ -447,19 +525,53 @@ def boiling_stop(*args):
 def cooling():
     global cooling_running
     global cooling_thread
+    global cooling_temp
+    global brewing_heating_level
     start_time = time.time()
     last_time = time.time()
+    last_plot = time.time()
+    elapsed_time = 0.0
+    plot_interval = 1.0
+
+    # Setup the PID regulator
+    set_settings()
+    pump1_speed = float(brewing_pump_speed.get()) / 100.0
+    pid = PID.PID(settings["cooling_kp"], settings["cooling_ki"], settings["cooling_kd"])
+    pid.setSampleTime(1)
+    pid.SetPoint = settings["cooling_setpoint"]
+
     while cooling_running:
+        set_settings()
+        # Run temp regulator
+        temp_setpoint = settings["cooling_setpoint"]
+        temp = float(cooling_temp.get())
+        pid.setKp(settings["cooling_kp"])
+        pid.setKi(settings["cooling_ki"])
+        pid.setKd(settings["cooling_kd"])
+
+        pid.SetPoint = temp_setpoint
+        pid.update(temp)
+        brewing_heating_level = max(min( pid.output/100.0, 1.0 ),0.0)
+
         # Print elapsed time
         if time.time() - last_time > 1.:
             elapsed_time = time.time()-start_time
             cooling_elapsed_time.configure(text=time.strftime('%H:%M:%S', time.gmtime(elapsed_time)))
             last_time = time.time()
+
+        # Check if plot data has to be updated
+        while time.time() - last_plot > plot_interval:
+            last_plot = time.time()
+            plot = [elapsed_time, temp, temp_setpoint, brewing_heating_level]
+            cooling_q.put(plot)
+
         time.sleep(0.1)
 
 def cooling_start(*args):
     global cooling_running
     global cooling_thread
+    global cooling_clear_plot
+    cooling_clear_plot = True
     speach_message("Cooling started")
     cooling_running_label.configure(text="Running", foreground="red")
     cooling_stop_button.configure(state=NORMAL)
@@ -474,6 +586,7 @@ def cooling_start(*args):
 def cooling_stop(*args):
     global cooling_running
     global cooling_thread
+    global cooling_clear_plot
     speach_message("Cooling ended")
     cooling_running_label.configure(text="")
     cooling_stop_button.configure(state=DISABLED)
@@ -482,13 +595,17 @@ def cooling_stop(*args):
     boiling_start_button.configure(state=NORMAL)
     cooling_start_button.configure(state=NORMAL)
     cooling_running = False
+    cooling_clear_plot = True
+
 
 def start_pump(*args):
-    i = 0
+    global pump1_speed
+    pump1_speed = 1.0
 
 
 def stop_pump(*args):
-    i = 0
+    global pump1_speed
+    pump1_speed = 0.0
 
 
 def select_file(*args):
@@ -847,6 +964,7 @@ threading.Thread(target=boiling_heater_thread, args=(BOILING_HEATER_BIT,)).start
 threading.Thread(target=pump1_thread, args=(PUMP1_BIT,)).start()
 threading.Thread(target=pump2_thread, args=(PUMP2_BIT,)).start()
 threading.Thread(target=plotting, args=(0,)).start()
+threading.Thread(target=cooling_plotting, args=(0,)).start()
 
 # get the path to the base directory
 base_directory = "/home/vidar/projects/knowme/data/"
