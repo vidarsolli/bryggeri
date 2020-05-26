@@ -1,1 +1,44 @@
-{"brewing_time": [1, 1, 1, 0], "cooling_ki": 2.1, "brewing_pump_speed": 80, "cooling_setpoint": 23.0, "cooling_kp": 1.2, "brewing_temp": [67, 70, 75, 73], "brewing_decrease_lim": 0.15, "boiling_heating_power": 95, "cooling_kd": 0.0, "brewing_increase_lim": 0.1, "heating_setpoint": 80.0}
+{
+  "heating_setpoint": 80.0,
+  "brewing_time": [
+    3,
+    2,
+    3,
+    3
+  ],
+  "brewing_temp": [
+    30,
+    33,
+    35,
+    30
+  ],
+  "brewing_increase_lim": 0.1,
+  "brewing_decrease_lim": 0.15,
+  "brewing_pump_speed": 80.0,
+  "boiling_heating_power": 95,
+  "cooling_setpoint": 23.0,
+  "brewing_pid": 1.0,
+  "brewing_kp": 15.0,
+  "brewing_ki": 2.5,
+  "brewing_kd": 0.0,
+  "cooling_kp": 1.2,
+  "cooling_ki": 2.1,
+  "cooling_kd": 0.0,
+  "heating_sensor": "0301a27919d8",
+  "brewing_sensor": "0300a2796693",
+  "cooling_sensor": "0301a2793e97",
+  "message_time": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "message_text": [
+    "Add humle",
+    "Add humle again",
+    "Add sugar",
+    "add humle",
+    "Add clearing"
+  ]
+}

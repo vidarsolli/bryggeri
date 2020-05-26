@@ -124,7 +124,6 @@ def cooling_plotting(args):
     fig.suptitle('Cooling temperature plot')
     plt.xlabel('Time [min]')
     plt.ylabel('Temp [C]')
-    #plt.grid(True)
     plotlays, plotcolors = [3], ["black","red", "green"]
     lines = []
     for index in range(3):
@@ -239,6 +238,7 @@ def pump2_thread( port ):
 
 def speach_message(txt_msg):
     os.system('echo "{0}" | festival --tts'.format(txt_msg))
+    print("Speach message:", txt_msg)
 
 
 def update_settings(*args):
@@ -311,28 +311,42 @@ def save_settings(*args):
         if filename.endswith('.json'):
             with open(filename, 'w') as outfile:
                 set_settings()
-                json.dump(settings, outfile)
+                json.dump(settings, outfile, indent=2)
                 selected_settings.set(str.split(str.split(filename, ".")[0], "/")[-1])
         else:
             messagebox.showerror('Error Saving settings', "Not .lson extention")
     except Exception as e:
         messagebox.showerror('Error Saving settings', 'Unable to open file: %r' % filename)
+
 def heating():
     global heating_running
     global heating_thread
+    global brewing_heating_level
+    global heating_temp
     start_time = time.time()
     last_time = time.time()
     while heating_running:
         # Print elapsed time
+        set_settings()
         if time.time() - last_time > 1.:
             elapsed_time = time.time()-start_time
             heating_elapsed_time.configure(text=time.strftime('%H:%M:%S', time.gmtime(elapsed_time)))
             last_time = time.time()
+
+        # Give an alarm message when wanted temperature is reached
+        if float(heating_temp.get()) > settings["heating_setpoint"]:
+            heating_running_label.configure(text="READY", foreground="red")
+            brewing_heating_level = 0.0
+
         time.sleep(0.1)
+
+
 
 def heating_start(*args):
     global heating_running
     global heating_thread
+    global brewing_heating_level
+    global pump1_speed
     speach_message("Heating started")
     heating_running_label.configure(text="Running", foreground="red")
     heating_stop_button.configure(state=NORMAL)
@@ -342,11 +356,15 @@ def heating_start(*args):
     cooling_start_button.configure(state=DISABLED)
     heating_running = True
     heating_thread = threading.Thread(target=heating)
+    brewing_heating_level = 1.0
+    pump1_speed = 1.0
     heating_thread.start()
 
 def heating_stop(*args):
     global heating_running
     global heating_thread
+    global brewing_heating_level
+    global pump1_speed
     speach_message("Heating ended")
     heating_running_label.configure(text="")
     heating_stop_button.configure(state=DISABLED)
@@ -354,6 +372,8 @@ def heating_stop(*args):
     brewing_start_button.configure(state=NORMAL)
     boiling_start_button.configure(state=NORMAL)
     cooling_start_button.configure(state=NORMAL)
+    brewing_heating_level = 0.0
+    pump1_speed = 0.0
     heating_running = False
 
 def brewing():
@@ -376,10 +396,6 @@ def brewing():
     time_extend = settings["brewing_time"][time_idx]*60
     temp_setpoint = settings["brewing_temp"][time_idx]
     next_change_of_temp = time_extend
-
-    no_of_messages = len(settings["message_time"])
-    print("Number of messages", no_of_messages)
-    msg_idx = 0
 
     plot_interval = np.sum(settings["brewing_temp"])*60.0/1000.0
     last_plot = 0.0
@@ -419,12 +435,6 @@ def brewing():
                 next_change_of_temp += time_extend
                 temp_setpoint = settings["brewing_temp"][time_idx]
                 print("Temp setpoint: ", temp_setpoint)
-
-        # Check for new voice message
-        if msg_idx < no_of_messages:
-            if time.time() - start_time > settings["message_time"][msg_idx]*60 :
-                speach_message(settings["message_text"][msg_idx])
-                msg_idx += 1
 
         # Check if plot data has to be updated
         while time.time() - last_plot > plot_interval:
@@ -480,18 +490,61 @@ def brewing_stop(*args):
     pump1_speed = 0.0
     """
 
+    msg_idx = 0
+    boiling_start_time = 0.0
+
 def boiling():
     global boiling_running
     global boiling_thread
-    start_time = time.time()
+    global boiling_start_time
+    global msg_idx
+    global boiling_next_message_label
+    boiling_start_time = time.time()
     last_time = time.time()
+    msg_idx = 0
+
+    no_of_messages = len(settings["message_time"])
+    print("Number of messages", no_of_messages)
+    boiling_message_label.configure(text=settings["message_text"][msg_idx], foreground="black")
+    next_time = time.strftime('%H:%M:%S', time.gmtime(settings["message_time"][msg_idx] * 60))
+    boiling_next_message_time_label.configure(text=next_time)
+
     while boiling_running:
         # Print elapsed time
         if time.time() - last_time > 1.:
-            elapsed_time = time.time()-start_time
+            elapsed_time = time.time()-boiling_start_time
             boiling_elapsed_time.configure(text=time.strftime('%H:%M:%S', time.gmtime(elapsed_time)))
             last_time = time.time()
+
+        # Check for new voice message
+        if msg_idx < no_of_messages:
+            if time.time() - boiling_start_time > settings["message_time"][msg_idx]*60 :
+                if boiling_ack_button["state"] == DISABLED:
+                    speach_message("Action required")
+                boiling_ack_button.configure(state=NORMAL)
+                boiling_message_label.configure(text=settings["message_text"][msg_idx], foreground="red")
+
         time.sleep(0.1)
+
+
+def boiling_ack():
+    global msg_idx
+    global boiling_message_label
+    global boiling_next_message_time_label
+    global boiling_start_time
+    if msg_idx < len(settings["message_time"]):
+        if time.time() - boiling_start_time > settings["message_time"][msg_idx] * 60:
+            #speach_message(settings["message_text"][msg_idx])
+            boiling_ack_button.configure(state=DISABLED)
+            msg_idx += 1
+            if msg_idx < len(settings["message_time"]):
+                boiling_message_label.configure(text=settings["message_text"][msg_idx], foreground="black")
+                next_time = time.strftime('%H:%M:%S', time.gmtime(settings["message_time"][msg_idx]*60))
+                boiling_next_message_time_label.configure(text=next_time)
+            else:
+                boiling_message_label.configure(text="No more actions", foreground="black")
+                boiling_next_message_time_label.configure(text="")
+
 
 def boiling_start(*args):
     global boiling_running
@@ -499,6 +552,7 @@ def boiling_start(*args):
     speach_message("Boiling started")
     boiling_running_label.configure(text="Running", foreground="red")
     boiling_stop_button.configure(state=NORMAL)
+    boiling_ack_button.configure(state=DISABLED)
     heating_start_button.configure(state=DISABLED)
     brewing_start_button.configure(state=DISABLED)
     boiling_start_button.configure(state=DISABLED)
@@ -514,6 +568,7 @@ def boiling_stop(*args):
     speach_message("Boiling ended")
     boiling_running_label.configure(text="")
     boiling_stop_button.configure(state=DISABLED)
+    boiling_ack_button.configure(state=DISABLED)
     heating_start_button.configure(state=NORMAL)
     brewing_start_button.configure(state=NORMAL)
     boiling_start_button.configure(state=NORMAL)
@@ -582,6 +637,7 @@ def cooling_start(*args):
     cooling_running = True
     cooling_thread = threading.Thread(target=cooling)
     cooling_thread.start()
+
 
 def cooling_stop(*args):
     global cooling_running
@@ -733,9 +789,9 @@ brewing_temp4 = StringVar()
 brewing_temp4_entry = ttk.Entry(mainframe, textvariable=brewing_temp4)
 brewing_temp4.set(str(settings["brewing_temp"][3]))
 brewing_pid_label = ttk.Label(mainframe, text="Use PID")
-brewing_kp_label = ttk.Label(mainframe, text="Kd")
+brewing_kp_label = ttk.Label(mainframe, text="Kp")
 brewing_ki_label = ttk.Label(mainframe, text="Ki")
-brewing_kd_label = ttk.Label(mainframe, text="Kp")
+brewing_kd_label = ttk.Label(mainframe, text="Kd")
 brewing_use_pid = StringVar()
 brewing_use_pid_button = ttk.Checkbutton(mainframe, text="Pid", variable=brewing_use_pid)
 brewing_kp = StringVar()
@@ -775,6 +831,12 @@ boiling_heating_power_entry = ttk.Entry(mainframe, textvariable=boiling_heating_
 boiling_heating_power.set(str(settings["boiling_heating_power"]))
 boiling_elapsed_time_label = ttk.Label(mainframe, text="Elapsed time")
 boiling_elapsed_time = ttk.Label(mainframe, text="00:00:00")
+
+boiling_next_message_label = ttk.Label(mainframe, text="Next action at")
+boiling_next_message_time_label = ttk.Label(mainframe, text="00:00:00")
+boiling_message_label = ttk.Label(mainframe, text="No message")
+boiling_ack_button = ttk.Button(mainframe, text="Ack", command=boiling_ack)
+
 boiling_start_button = ttk.Button(mainframe, text="Start", command=boiling_start)
 boiling_stop_button = ttk.Button(mainframe, text="Stop", command=boiling_stop, state=DISABLED)
 
@@ -862,68 +924,73 @@ brewing_increase_lim_label.grid(column=1, row=14, sticky=W, pady=5, padx=5)
 brewing_increase_lim_entry.grid(column=2, row=14, sticky=W, pady=5, padx=5)
 brewing_decrease_lim_label.grid(column=3, row=14, sticky=W, pady=5, padx=5)
 brewing_decrease_lim_entry.grid(column=4, row=14, sticky=W, pady=5, padx=5)
-brewing_pump_speed_label.grid(column=1, row=15, sticky=W, pady=5, padx=5)
-brewing_pump_speed_entry.grid(column=2, row=15, sticky=W, pady=5, padx=5)
-brewing_current_label.grid(column=3, row=15, sticky=W, pady=5, padx=5)
-brewing_current.grid(column=4, row=15, sticky=W, pady=5, padx=5)
-brewing_elapsed_time_label.grid(column=1, row=16, sticky=W, pady=5, padx=5)
-brewing_elapsed_time.grid(column=2, row=16, sticky=W, pady=5, padx=5)
-brewing_start_button.grid(column=3, row=17, sticky=E, pady=5, padx=5)
-brewing_stop_button.grid(column=4, row=17, sticky=E, pady=5, padx=5)
+brewing_pid_label.grid(column=1, row=15, sticky=W, pady=5, padx=5)
+brewing_kp_label.grid(column=2, row=15, sticky=W, pady=5, padx=5)
+brewing_ki_label.grid(column=3, row=15, sticky=W, pady=5, padx=5)
+brewing_kd_label.grid(column=4, row=15, sticky=W, pady=5, padx=5)
+brewing_use_pid_button.grid(column=1, row=15, sticky=W, pady=5, padx=5)
+brewing_kp_entry.grid(column=2, row=15, sticky=W, pady=5, padx=5)
+brewing_ki_entry.grid(column=3, row=15, sticky=W, pady=5, padx=5)
+brewing_kd_entry.grid(column=4, row=15, sticky=W, pady=5, padx=5)
 
-boiling_label.grid(column=1, row=19, sticky=W, pady=5, padx=5)
-boiling_running_label.grid(column=2, row=19, sticky=W, pady=5, padx=5)
-boiling_start_pump_button.grid(column=1, row=20, sticky=W, pady=5, padx=5)
-boiling_stop_pump_button.grid(column=2, row=20, sticky=W, pady=5, padx=5)
-boiling_heating_power_label.grid(column=3, row=20, sticky=W, pady=5, padx=5)
-boiling_heating_power_entry.grid(column=4, row=20, sticky=W, pady=5, padx=5)
-boiling_elapsed_time_label.grid(column=1, row=21, sticky=W, pady=5, padx=5)
-boiling_elapsed_time.grid(column=2, row=21, sticky=W, pady=5, padx=5)
-boiling_start_button.grid(column=3, row=22, sticky=E, pady=5, padx=5)
-boiling_stop_button.grid(column=4, row=22, sticky=E, pady=5, padx=5)
+brewing_pump_speed_label.grid(column=1, row=17, sticky=W, pady=5, padx=5)
+brewing_pump_speed_entry.grid(column=2, row=17, sticky=W, pady=5, padx=5)
+brewing_current_label.grid(column=3, row=17, sticky=W, pady=5, padx=5)
+brewing_current.grid(column=4, row=17, sticky=W, pady=5, padx=5)
+brewing_elapsed_time_label.grid(column=1, row=18, sticky=W, pady=5, padx=5)
+brewing_elapsed_time.grid(column=2, row=18, sticky=W, pady=5, padx=5)
+brewing_start_button.grid(column=3, row=19, sticky=E, pady=5, padx=5)
+brewing_stop_button.grid(column=4, row=19, sticky=E, pady=5, padx=5)
 
-cooling_label.grid(column=1, row=24, sticky=W, pady=5, padx=5)
-cooling_running_label.grid(column=2, row=24, sticky=W, pady=5, padx=5)
-cooling_setpoint_label.grid(column=1, row=25, sticky=W, pady=5, padx=5)
-cooling_setpoint_entry.grid(column=2, row=25, sticky=W, pady=5, padx=5)
-cooling_current_label.grid(column=3, row=25, sticky=W, pady=5, padx=5)
-cooling_current.grid(column=4, row=25, sticky=W, pady=5, padx=5)
+boiling_label.grid(column=1, row=20, sticky=W, pady=5, padx=5)
+boiling_running_label.grid(column=2, row=20, sticky=W, pady=5, padx=5)
+boiling_start_pump_button.grid(column=1, row=22, sticky=W, pady=5, padx=5)
+boiling_stop_pump_button.grid(column=2, row=22, sticky=W, pady=5, padx=5)
+boiling_heating_power_label.grid(column=3, row=22, sticky=W, pady=5, padx=5)
+boiling_heating_power_entry.grid(column=4, row=22, sticky=W, pady=5, padx=5)
+boiling_elapsed_time_label.grid(column=1, row=23, sticky=W, pady=5, padx=5)
+boiling_elapsed_time.grid(column=2, row=23, sticky=W, pady=5, padx=5)
+boiling_next_message_label.grid(column=1, row=24, sticky=W, pady=5, padx=5)
+boiling_next_message_time_label.grid(column=2, row=24, sticky=W, pady=5, padx=5)
+boiling_message_label.grid(column=3, row=24, sticky=W, pady=5, padx=5)
+boiling_ack_button.grid(column=4, row=24, sticky=E, pady=5, padx=5)
 
-cooling_kp_label.grid(column=1, row=26, sticky=W, pady=5, padx=5)
-cooling_kp_entry.grid(column=2, row=26, sticky=W, pady=5, padx=5)
-cooling_ki_label.grid(column=3, row=26, sticky=W, pady=5, padx=5)
-cooling_ki_entry.grid(column=4, row=26, sticky=W, pady=5, padx=5)
-cooling_elapsed_time_label.grid(column=1, row=27, sticky=W, pady=5, padx=5)
-cooling_elapsed_time.grid(column=2, row=27, sticky=W, pady=5, padx=5)
-cooling_start_button.grid(column=3, row=28, sticky=E, pady=5, padx=5)
-cooling_stop_button.grid(column=4, row=28, sticky=E, pady=5, padx=5)
+boiling_start_button.grid(column=3, row=25, sticky=E, pady=5, padx=5)
+boiling_stop_button.grid(column=4, row=25, sticky=E, pady=5, padx=5)
 
-option_plot_curves_label.grid(column=1, row=30, sticky=W, pady=5, padx=5)
-option_temp1_label.grid(column=2, row=30, sticky=W, pady=5, padx=5)
-option_temp2_label.grid(column=3, row=30, sticky=W, pady=5, padx=5)
-option_temp3_label.grid(column=4, row=30, sticky=W, pady=5, padx=5)
-option_plot_curves.grid(column=1, row=31, sticky=W, pady=5, padx=5)
-option_temp1.grid(column=2, row=31, sticky=W, pady=5, padx=5)
-option_temp2.grid(column=3, row=31, sticky=W, pady=5, padx=5)
-option_temp3.grid(column=4, row=31, sticky=W, pady=5, padx=5)
+cooling_label.grid(column=1, row=26, sticky=W, pady=5, padx=5)
+cooling_running_label.grid(column=2, row=26, sticky=W, pady=5, padx=5)
+cooling_setpoint_label.grid(column=1, row=27, sticky=W, pady=5, padx=5)
+cooling_setpoint_entry.grid(column=2, row=27, sticky=W, pady=5, padx=5)
+cooling_current_label.grid(column=3, row=27, sticky=W, pady=5, padx=5)
+cooling_current.grid(column=4, row=27, sticky=W, pady=5, padx=5)
 
-info_pump1_label.grid(column=1, row=32, sticky=W, pady=5, padx=5)
-info_pump2_label.grid(column=2, row=32, sticky=W, pady=5, padx=5)
-info_brewing_heater_label.grid(column=3, row=32, sticky=W, pady=5, padx=5)
-info_boiling_heater_label.grid(column=4, row=32, sticky=W, pady=5, padx=5)
-info_pump1.grid(column=1, row=33, sticky=W, pady=5, padx=5)
-info_pump2.grid(column=2, row=33, sticky=W, pady=5, padx=5)
-info_brewing_heater.grid(column=3, row=33, sticky=W, pady=5, padx=5)
-info_boiling_heater.grid(column=4, row=33, sticky=W, pady=5, padx=5)
+cooling_kp_label.grid(column=1, row=28, sticky=W, pady=5, padx=5)
+cooling_kp_entry.grid(column=2, row=28, sticky=W, pady=5, padx=5)
+cooling_ki_label.grid(column=3, row=28, sticky=W, pady=5, padx=5)
+cooling_ki_entry.grid(column=4, row=28, sticky=W, pady=5, padx=5)
+cooling_elapsed_time_label.grid(column=1, row=29, sticky=W, pady=5, padx=5)
+cooling_elapsed_time.grid(column=2, row=29, sticky=W, pady=5, padx=5)
+cooling_start_button.grid(column=3, row=30, sticky=E, pady=5, padx=5)
+cooling_stop_button.grid(column=4, row=30, sticky=E, pady=5, padx=5)
 
-brewing_pid_label.grid(column=1, row=34, sticky=W, pady=5, padx=5)
-brewing_kp_label.grid(column=2, row=34, sticky=W, pady=5, padx=5)
-brewing_ki_label.grid(column=3, row=34, sticky=W, pady=5, padx=5)
-brewing_kd_label.grid(column=4, row=34, sticky=W, pady=5, padx=5)
-brewing_use_pid_button.grid(column=1, row=35, sticky=W, pady=5, padx=5)
-brewing_kp_entry.grid(column=2, row=35, sticky=W, pady=5, padx=5)
-brewing_ki_entry.grid(column=3, row=35, sticky=W, pady=5, padx=5)
-brewing_kd_entry.grid(column=4, row=35, sticky=W, pady=5, padx=5)
+option_plot_curves_label.grid(column=1, row=32, sticky=W, pady=5, padx=5)
+option_temp1_label.grid(column=2, row=32, sticky=W, pady=5, padx=5)
+option_temp2_label.grid(column=3, row=32, sticky=W, pady=5, padx=5)
+option_temp3_label.grid(column=4, row=32, sticky=W, pady=5, padx=5)
+option_plot_curves.grid(column=1, row=33, sticky=W, pady=5, padx=5)
+option_temp1.grid(column=2, row=33, sticky=W, pady=5, padx=5)
+option_temp2.grid(column=3, row=33, sticky=W, pady=5, padx=5)
+option_temp3.grid(column=4, row=33, sticky=W, pady=5, padx=5)
+
+info_pump1_label.grid(column=1, row=34, sticky=W, pady=5, padx=5)
+info_pump2_label.grid(column=2, row=34, sticky=W, pady=5, padx=5)
+info_brewing_heater_label.grid(column=3, row=34, sticky=W, pady=5, padx=5)
+info_boiling_heater_label.grid(column=4, row=34, sticky=W, pady=5, padx=5)
+info_pump1.grid(column=1, row=35, sticky=W, pady=5, padx=5)
+info_pump2.grid(column=2, row=35, sticky=W, pady=5, padx=5)
+info_brewing_heater.grid(column=3, row=35, sticky=W, pady=5, padx=5)
+info_boiling_heater.grid(column=4, row=35, sticky=W, pady=5, padx=5)
 
 
 
