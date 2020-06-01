@@ -77,7 +77,7 @@ def plotting(args):
     axs[0].grid()
     #axs[0].set_position([0.05, 0.1, 0.42, 0.8])
     axs[1].set_xlim(0, 10)
-    axs[1].set_ylim(15, 30)
+    axs[1].set_ylim(15, 35)
     axs[1].set_title("Cooling temperature")
     axs[1].set_xlabel('Time [min]')
     axs[1].set_ylabel('Temp [C]')
@@ -130,6 +130,13 @@ def plotting(args):
             lines[2].set_data([plot_time, plot_powr])
         if point[0] == 1:    # Cooling
             #print("Plotting Cooling")
+            #axs[1].set_xlim(0, 10)
+            x0, x1 = axs[1].get_xlim()
+            if point[1]/60 > x1:
+                x0 += 1
+                x1 += 1
+                axs[1].set_xlim(x0, x1)
+                plt.draw()
             plot_cooling_temp = np.append(plot_cooling_temp, point[2])
             plot_cooling_time = np.append(plot_cooling_time, point[1]/60.0)
             plot_cooling_setp = np.append(plot_cooling_setp, point[3])
@@ -738,6 +745,7 @@ brewing_ki_label = ttk.Label(mainframe, text="Ki")
 brewing_kd_label = ttk.Label(mainframe, text="Kd")
 brewing_use_pid = StringVar()
 brewing_use_pid_button = ttk.Checkbutton(mainframe, text="Pid", variable=brewing_use_pid)
+brewing_use_pid.set(str(settings["brewing_pid"]))
 brewing_kp = StringVar()
 brewing_kp_entry = ttk.Entry(mainframe, textvariable=brewing_kp)
 brewing_kp.set(str(settings["brewing_kp"]))
