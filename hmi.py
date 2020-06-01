@@ -52,8 +52,11 @@ plot_setp = np.zeros(1)
 plot_powr = np.zeros(1)
 clear_plot = False
 
+anim = None
+
 
 def plotting(args):
+    global anim
     # First set up the figure, the axis, and the plot element we want to animate
     fig = plt.figure()
     ax = plt.axes(xlim=(0, int(np.sum(settings["brewing_time"]))), ylim=(20.0, max(settings["brewing_temp"])+10.0))
@@ -76,7 +79,19 @@ def plotting(args):
     # animation function.  This is called sequentially
     def animate(i):
         global idx
-        global plot_temp, plot_time, plot_setp, plot_powr, clear_plot
+        global anim
+        global plot_temp, plot_time, plot_setp, plot_powr, clear_plot, cooling_clear_plot
+        if cooling_clear_plot:
+            cooling_clear_plot = False
+            idx = 0
+            plot_temp = []
+            plot_time = []
+            plot_setp = []
+            plot_powr = []
+            anim.event_source.stop()
+            anim = animation.FuncAnimation(fig, animate, init_func=init,
+                                           interval=20, blit=True)
+
         if clear_plot:
             clear_plot = False
             idx = 0
@@ -273,13 +288,14 @@ def set_settings(*args):
     settings["brewing_temp"][1] = int(brewing_temp2.get())
     settings["brewing_temp"][2] = int(brewing_temp3.get())
     settings["brewing_temp"][3] = int(brewing_temp4.get())
-    settings["brewing_pid"] = float(brewing_use_pid.get())
+    #settings["brewing_pid"] = float(brewing_use_pid.get())
     settings["brewing_kp"] = float(brewing_kp.get())
     settings["brewing_ki"] = float(brewing_ki.get())
     settings["brewing_kd"] = float(brewing_kd.get())
     settings["brewing_increase_lim"] = float(brewing_increase_lim.get())
     settings["brewing_decrease_lim"] = float(brewing_decrease_lim.get())
     settings["brewing_pump_speed"] = float(brewing_pump_speed.get())
+    settings["boiling_heating_power"] = float(boiling_heating_power.get())
     settings["cooling_setpoint"] = float(cooling_setpoint.get())
     settings["cooling_kp"] = float(cooling_kp.get())
     settings["cooling_ki"] = float(cooling_ki.get())
@@ -325,6 +341,7 @@ def heating():
     global heating_temp
     start_time = time.time()
     last_time = time.time()
+    voice_message_time = 0.0
     while heating_running:
         # Print elapsed time
         set_settings()
@@ -337,6 +354,9 @@ def heating():
         if float(heating_temp.get()) > settings["heating_setpoint"]:
             heating_running_label.configure(text="READY", foreground="red")
             brewing_heating_level = 0.0
+            if time.time() > voice_message_time:
+                speach_message("Watch up, Heating ready")
+                voice_message_time = time.time() + 10
 
         time.sleep(0.1)
 
@@ -499,8 +519,12 @@ def boiling():
     global boiling_start_time
     global msg_idx
     global boiling_next_message_label
+    global boiling_ack_button
+    global boiling_heating_level
+
     boiling_start_time = time.time()
     last_time = time.time()
+    voice_message_time = 0
     msg_idx = 0
 
     no_of_messages = len(settings["message_time"])
@@ -510,19 +534,25 @@ def boiling():
     boiling_next_message_time_label.configure(text=next_time)
 
     while boiling_running:
+        elapsed_time = time.time() - boiling_start_time
+        set_settings()
         # Print elapsed time
         if time.time() - last_time > 1.:
-            elapsed_time = time.time()-boiling_start_time
             boiling_elapsed_time.configure(text=time.strftime('%H:%M:%S', time.gmtime(elapsed_time)))
             last_time = time.time()
 
         # Check for new voice message
         if msg_idx < no_of_messages:
-            if time.time() - boiling_start_time > settings["message_time"][msg_idx]*60 :
-                if boiling_ack_button["state"] == DISABLED:
+            if elapsed_time > settings["message_time"][msg_idx]*60 :
+                if time.time() > voice_message_time:
                     speach_message("Action required")
+                    voice_message_time = time.time() + 10
                 boiling_ack_button.configure(state=NORMAL)
                 boiling_message_label.configure(text=settings["message_text"][msg_idx], foreground="red")
+            else:
+                voice_message_time = 0
+        # Update heating power in case changed
+        boiling_heating_level = settings["boiling_heating_power"]
 
         time.sleep(0.1)
 
@@ -549,6 +579,7 @@ def boiling_ack():
 def boiling_start(*args):
     global boiling_running
     global boiling_thread
+    global boiling_heating_level
     speach_message("Boiling started")
     boiling_running_label.configure(text="Running", foreground="red")
     boiling_stop_button.configure(state=NORMAL)
@@ -557,6 +588,7 @@ def boiling_start(*args):
     brewing_start_button.configure(state=DISABLED)
     boiling_start_button.configure(state=DISABLED)
     cooling_start_button.configure(state=DISABLED)
+    boiling_heating_level = settings["boiling_heating_power"]
     boiling_running = True
     boiling_thread = threading.Thread(target=boiling)
     boiling_thread.start()
@@ -618,14 +650,15 @@ def cooling():
         while time.time() - last_plot > plot_interval:
             last_plot = time.time()
             plot = [elapsed_time, temp, temp_setpoint, brewing_heating_level]
-            cooling_q.put(plot)
+            #cooling_q.put(plot)
+            temp_q.put(plot)
 
         time.sleep(0.1)
 
 def cooling_start(*args):
     global cooling_running
     global cooling_thread
-    global cooling_clear_plot
+    global  cooling_clear_plot
     cooling_clear_plot = True
     speach_message("Cooling started")
     cooling_running_label.configure(text="Running", foreground="red")
@@ -664,75 +697,16 @@ def stop_pump(*args):
     pump1_speed = 0.0
 
 
-def select_file(*args):
-    global raw_sequence
-    global annotation_tags
-    global tag_lbox
-    global xref
-    filename = filedialog.askopenfilename(title="Select file to annotate",
-                                          initialdir=base_directory+person.get()+"/raw",
-                                          filetypes=[('Video files', '*.avi*')])
-    if len(filename) > 1:
-        reference = str.split(filename, ".")[0]
-        reference = str.split(reference, "/")[-1]
-        reference = str.split(reference, "X")[0]
-        reference = reference[0:-1]
 
-        print(reference)
-        raw_sequence.set(reference)
-        tag_lbox.configure(state=NORMAL)
-        # Read the local annotation tags
-        json_file = base_directory+person.get()+"/annotated/tags.json"
-        with open(json_file) as jsonFile:
-            annotation_tags = json.load(jsonFile)
-            print("Annotation tags: ", annotation_tags)
-            tags = StringVar(value=annotation_tags["tags"])
-            tag_lbox.configure(listvariable=tags)
-        # Read the cross reference file (connection between the saved sequence and the annotation tag)
-        json_file = base_directory+person.get()+"/annotated/xref.json"
-        with open(json_file, mode="r+") as jsonFile:
-            xref = json.load(jsonFile)
-            print("Xref: ", xref)
 
-    print(filename)
 
-def select_start_time(*args):
-    print("Start time selected")
-
-def select_tag(*args):
-    selected_tag.set(tag_lbox.selection_get())
-    save_button.configure(state=NORMAL)
-
-def save_file(*args):
-    global xref
-    global raw_sequence
-    print("Start time: ", start_time.get())
-    print("End time : ", end_time.get())
-    print("Sound significance: ", sound_scale.get())
-    print("Face significance: ", face_scale.get())
-    print("Gesture significance: ", gesture_scale.get())
-    print("Annotation tag: ", selected_tag.get())
-    filename = datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")
-    print(filename)
-    # Update the cross reference file with the new file and tag
-    x_reference = {filename: selected_tag.get()}
-    xref.update(x_reference)
-    json_file = base_directory + person.get() + "/annotated/xref.json"
-    with open(json_file, mode="w") as jsonFile:
-        json.dump(xref, jsonFile)
-    # Save the sequence descriptor file
-    json_file = base_directory + person.get() + "/annotated/" + filename + ".json"
-    with open(json_file, mode="w") as jsonFile:
-        descriptor = [{"raw_file": raw_sequence.get(), "tag": selected_tag.get()}]
-        json.dump(descriptor, jsonFile)
+root = Tk()
+root.title("Garasjebryggeriet")
 
 # Read default settings
 with open("default_settings.json", mode="r+") as jsonFile:
     settings = json.load(jsonFile)
     print("Default settings: ", settings)
-
-root = Tk()
-root.title("Garasjebryggeriet")
 
 mainframe = ttk.Frame(root, padding="12 12 12 12")
 mainframe.grid(column=0, row=0, sticky=(N, W, E, S))
@@ -744,6 +718,7 @@ read_settings_label = ttk.Label(mainframe, text="Read and save settings:")
 read_settings_button = ttk.Button(mainframe, text="Read settings", command=read_settings)
 selected_settings = StringVar()
 selected_settings_label = ttk.Label(mainframe, text="No file selected")
+selected_settings.set("default_settings")
 selected_settings_label['textvariable'] = selected_settings
 save_settings_button = ttk.Button(mainframe, text="Save settings", command=save_settings)
 
@@ -796,10 +771,13 @@ brewing_use_pid = StringVar()
 brewing_use_pid_button = ttk.Checkbutton(mainframe, text="Pid", variable=brewing_use_pid)
 brewing_kp = StringVar()
 brewing_kp_entry = ttk.Entry(mainframe, textvariable=brewing_kp)
+brewing_kp.set(str(settings["brewing_kp"]))
 brewing_ki = StringVar()
 brewing_ki_entry = ttk.Entry(mainframe, textvariable=brewing_ki)
+brewing_ki.set(str(settings["brewing_ki"]))
 brewing_kd = StringVar()
 brewing_kd_entry = ttk.Entry(mainframe, textvariable=brewing_kd)
+brewing_kd.set(str(settings["brewing_kd"]))
 
 
 brewing_increase_lim_label = ttk.Label(mainframe, text="Increase lim")
@@ -1013,7 +991,10 @@ heating_temp.set(heating_sensor.get_temperature())
 brewing_temp.set(brewing_sensor.get_temperature())
 cooling_temp.set(cooling_sensor.get_temperature())
 
+boiling_ack_button.configure(state=DISABLED)
+
 threading.Thread(target=temperature_thread, args=(0,)).start()
+
 
 # Setup GPIO bits
 gpio.setmode(gpio.BCM)
@@ -1031,7 +1012,7 @@ threading.Thread(target=boiling_heater_thread, args=(BOILING_HEATER_BIT,)).start
 threading.Thread(target=pump1_thread, args=(PUMP1_BIT,)).start()
 threading.Thread(target=pump2_thread, args=(PUMP2_BIT,)).start()
 threading.Thread(target=plotting, args=(0,)).start()
-threading.Thread(target=cooling_plotting, args=(0,)).start()
+#threading.Thread(target=cooling_plotting, args=(0,)).start()
 
 # get the path to the base directory
 base_directory = "/home/vidar/projects/knowme/data/"
