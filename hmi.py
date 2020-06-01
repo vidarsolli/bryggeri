@@ -52,23 +52,38 @@ plot_setp = np.zeros(1)
 plot_powr = np.zeros(1)
 clear_plot = False
 
+cooling_idx = 0
+plot_cooling_temp = np.zeros(1)
+plot_cooling_time = np.zeros(1)
+plot_cooling_setp = np.zeros(1)
+plot_cooling_powr = np.zeros(1)
+clear_cooling_plot = False
+
 anim = None
 
-
 def plotting(args):
-    global anim
-    # First set up the figure, the axis, and the plot element we want to animate
-    fig = plt.figure()
-    ax = plt.axes(xlim=(0, int(np.sum(settings["brewing_time"]))), ylim=(20.0, max(settings["brewing_temp"])+10.0))
-    fig.suptitle('Brewing temperature plot')
-    plt.xlabel('Time [min]')
-    plt.ylabel('Temp [C]')
-    #plt.grid(True)
-    plotlays, plotcolors = [3], ["black","red", "green"]
-    lines = []
-    for index in range(3):
-        lobj = ax.plot([], [], lw=1, color=plotcolors[index])[0]
-        lines.append(lobj)
+    fig, axs = plt.subplots(1, 2)
+    fig.set_size_inches(12, 4)
+    line_label = ["Temp", "Setpoint", "Power", "Temp", "Setpoint", "Power"]
+    N = 6
+    lines = [axs[int(i / 3)].plot([], [], label=line_label[i])[0] for i in range(N)]  # lines to animate
+
+    axs[0].set_xlim(0, sum(settings["brewing_time"]))
+    axs[0].set_ylim(min(settings["brewing_temp"])- 10.0, max(settings["brewing_temp"])+ 10.0)
+    axs[0].set_title("Brewing temperature")
+    axs[0].set_xlabel('Time [min]')
+    axs[0].set_ylabel('Temp [C]')
+    axs[0].legend()
+    axs[0].grid()
+    #axs[0].set_position([0.05, 0.1, 0.42, 0.8])
+    axs[1].set_xlim(0, 10)
+    axs[1].set_ylim(15, 30)
+    axs[1].set_title("Cooling temperature")
+    axs[1].set_xlabel('Time [min]')
+    axs[1].set_ylabel('Temp [C]')
+    axs[1].legend()
+    axs[1].grid()
+    #axs[1].set_position([0.55, 0.1, 0.42, 0.8])
 
     # initialization function: plot the background of each frame
     def init():
@@ -80,17 +95,18 @@ def plotting(args):
     def animate(i):
         global idx
         global anim
-        global plot_temp, plot_time, plot_setp, plot_powr, clear_plot, cooling_clear_plot
-        if cooling_clear_plot:
-            cooling_clear_plot = False
+        global plot_temp, plot_time, plot_setp, plot_powr, clear_plot
+        global clear_cooling_plot, plot_cooling_temp, plot_cooling_time, plot_cooling_setp, plot_cooling_powr
+        if clear_cooling_plot:
+            clear_cooling_plot = False
             idx = 0
-            plot_temp = []
-            plot_time = []
-            plot_setp = []
-            plot_powr = []
-            anim.event_source.stop()
-            anim = animation.FuncAnimation(fig, animate, init_func=init,
-                                           interval=20, blit=True)
+            plot_cooling_temp = []
+            plot_cooling_time = []
+            plot_cooling_setp = []
+            plot_cooling_powr = []
+            #anim.event_source.stop()
+            #anim = animation.FuncAnimation(fig, animate, init_func=init,
+            #                               interval=20, blit=True)
 
         if clear_plot:
             clear_plot = False
@@ -99,79 +115,32 @@ def plotting(args):
             plot_time = []
             plot_setp = []
             plot_powr = []
+
         point = temp_q.get()
-        plot_temp = np.append(plot_temp,point[1])
-        plot_time = np.append(plot_time, point[0]/60.0)
-        plot_setp = np.append(plot_setp, point[2])
-        plot_powr = np.append(plot_powr, 20.0 + point[3]*(max(settings["brewing_temp"])+10.0-20.0))
-        idx += 1
-        xlist = [plot_time, plot_time, plot_time]
-        ylist = [plot_temp, plot_setp, plot_powr]
-        for lnum, line in enumerate(lines):
-            line.set_data([xlist[lnum], ylist[lnum]])
-        return lines
+        if point[0] == 0:    # Brewing
+            plot_temp = np.append(plot_temp,point[2])
+            plot_time = np.append(plot_time, point[1]/60.0)
+            plot_setp = np.append(plot_setp, point[3])
+            powr_min = min(settings["brewing_temp"]) - 10.0
+            powr_max = max(settings["brewing_temp"]) + 10.0
+            plot_powr = np.append(plot_powr, powr_min+point[4]*(powr_max - powr_min))
+            idx += 1
+            lines[0].set_data([plot_time, plot_temp])
+            lines[1].set_data([plot_time, plot_setp])
+            lines[2].set_data([plot_time, plot_powr])
+        if point[0] == 1:    # Cooling
+            #print("Plotting Cooling")
+            plot_cooling_temp = np.append(plot_cooling_temp, point[2])
+            plot_cooling_time = np.append(plot_cooling_time, point[1]/60.0)
+            plot_cooling_setp = np.append(plot_cooling_setp, point[3])
+            powr_min = 15.0
+            powr_max = 30.0
+            plot_cooling_powr = np.append(plot_cooling_powr, powr_min+point[4]*(powr_max - powr_min))
+            idx += 1
+            lines[3].set_data([plot_cooling_time, plot_cooling_temp])
+            lines[4].set_data([plot_cooling_time, plot_cooling_setp])
+            lines[5].set_data([plot_cooling_time, plot_cooling_powr])
 
-        #temp_line.set_data(plot_time, plot_temp)
-        #setp_line.set_data(plot_time, plot_temp)
-        #return setp_line,
-
-    # call the animator.  blit=True means only re-draw the parts that have changed.
-    anim = animation.FuncAnimation(fig, animate, init_func=init,
-                                   interval=20, blit=True)
-
-    plt.show()
-
-cooling_q = queue.Queue()
-cooling_idx = 0
-cooling_plot_temp = np.zeros(1)
-cooling_plot_time = np.zeros(1)
-cooling_plot_setp = np.zeros(1)
-cooling_plot_powr = np.zeros(1)
-cooling_clear_plot = False
-
-
-def cooling_plotting(args):
-    # First set up the figure, the axis, and the plot element we want to animate
-    y_min = settings["cooling_setpoint"]-10.0
-    y_max = settings["cooling_setpoint"]+10.0
-    fig = plt.figure()
-    ax = plt.axes(xlim=(0, 10), ylim=(y_min, y_max))
-    fig.suptitle('Cooling temperature plot')
-    plt.xlabel('Time [min]')
-    plt.ylabel('Temp [C]')
-    plotlays, plotcolors = [3], ["black","red", "green"]
-    lines = []
-    for index in range(3):
-        lobj = ax.plot([], [], lw=1, color=plotcolors[index])[0]
-        lines.append(lobj)
-
-    # initialization function: plot the background of each frame
-    def init():
-        for line in lines:
-            line.set_data([], [])
-        return lines
-
-    # animation function.  This is called sequentially
-    def animate(i):
-        global cooling_idx
-        global cooling_plot_temp, cooling_plot_time, cooling_plot_setp, cooling_plot_powr, cooling_clear_plot
-        if cooling_clear_plot:
-            cooling_clear_plot = False
-            cooling_idx = 0
-            cooling_plot_temp = []
-            cooling_plot_time = []
-            cooling_plot_setp = []
-            cooling_plot_powr = []
-        point = cooling_q.get()
-        cooling_plot_temp = np.append(cooling_plot_temp,point[1])
-        cooling_plot_time = np.append(cooling_plot_time, point[0]/60.0)
-        cooling_plot_setp = np.append(cooling_plot_setp, point[2])
-        cooling_plot_powr = np.append(cooling_plot_powr, y_min + point[3]*(y_max - y_min))
-        cooling_idx += 1
-        xlist = [cooling_plot_time, cooling_plot_time, cooling_plot_time]
-        ylist = [cooling_plot_temp, cooling_plot_setp, cooling_plot_powr]
-        for lnum, line in enumerate(lines):
-            line.set_data([xlist[lnum], ylist[lnum]])
         return lines
 
         #temp_line.set_data(plot_time, plot_temp)
@@ -459,7 +428,7 @@ def brewing():
         # Check if plot data has to be updated
         while time.time() - last_plot > plot_interval:
             last_plot = time.time()
-            plot = [elapsed_time, temp, temp_setpoint, brewing_heating_level]
+            plot = [0, elapsed_time, temp, temp_setpoint, brewing_heating_level]
             temp_q.put(plot)
         if not brewing_running:
             print("Break from the brewing thread")
@@ -649,7 +618,7 @@ def cooling():
         # Check if plot data has to be updated
         while time.time() - last_plot > plot_interval:
             last_plot = time.time()
-            plot = [elapsed_time, temp, temp_setpoint, brewing_heating_level]
+            plot = [1, elapsed_time, temp, temp_setpoint, brewing_heating_level]
             #cooling_q.put(plot)
             temp_q.put(plot)
 
